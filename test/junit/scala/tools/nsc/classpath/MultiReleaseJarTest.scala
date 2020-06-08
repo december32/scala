@@ -8,7 +8,7 @@ import java.util.jar.Attributes.Name
 import org.junit.{Assert, Test}
 
 import scala.tools.nsc.{Global, Settings}
-import scala.tools.testing.BytecodeTesting
+import scala.tools.testkit.BytecodeTesting
 import scala.util.Properties
 
 class MultiReleaseJarTest extends BytecodeTesting {
@@ -62,7 +62,7 @@ class MultiReleaseJarTest extends BytecodeTesting {
       import g._
       settings.release.value = release
       new Run
-      rootMirror.getClassIfDefined(TypeName(className)) != NoSymbol
+      rootMirror.getClassIfDefined(className) != NoSymbol
     }
     Assert.assertTrue(lookup("java.lang.invoke.LambdaMetafactory", "8"))
     Assert.assertFalse(lookup("java.lang.invoke.LambdaMetafactory", "7"))

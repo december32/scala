@@ -1,10 +1,14 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2003-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala
 package sys
@@ -13,8 +17,9 @@ package process
 import processInternal._
 import Process._
 import java.io.{ FileInputStream, FileOutputStream }
-import BasicIO.{ Uncloseable, Streamed }
+import BasicIO.{ LazilyListed, Streamed, Uncloseable }
 import Uncloseable.protect
+import scala.util.control.NonFatal
 
 private[process] trait ProcessBuilderImpl {
   self: ProcessBuilder.type =>
@@ -28,7 +33,7 @@ private[process] trait ProcessBuilderImpl {
     override def canPipeTo = true
   }
 
-  private[process] class URLInput(url: URL) extends IStreamBuilder(url.openStream, url.toString)
+  private[process] class URLInput(url: URL) extends IStreamBuilder(url.openStream(), url.toString)
   private[process] class FileInput(file: File) extends IStreamBuilder(new FileInputStream(file), file.getAbsolutePath)
   private[process] class FileOutput(file: File, append: Boolean) extends OStreamBuilder(new FileOutputStream(file, append), file.getAbsolutePath)
 
@@ -60,7 +65,7 @@ private[process] trait ProcessBuilderImpl {
           ok = true
         } finally success.put(ok)
       }
-      val t = Spawn(go(), io.daemonizeThreads)
+      val t = Spawn("ThreadProcess", io.daemonizeThreads)(go())
       new ThreadProcess(t, success)
     }
   }
@@ -68,15 +73,22 @@ private[process] trait ProcessBuilderImpl {
   /** Represents a simple command without any redirection or combination. */
   private[process] class Simple(p: JProcessBuilder) extends AbstractBuilder {
     override def run(io: ProcessIO): Process = {
+      import java.lang.ProcessBuilder.Redirect.{INHERIT => Inherit}
+      import io.{daemonizeThreads, processError, processOutput, writeInput}
+
+      val inherit = writeInput eq BasicIO.connectToStdIn
+      if (inherit) p.redirectInput(Inherit)
+
       val process = p.start() // start the external process
-      import io._
 
       // spawn threads that process the input, output, and error streams using the functions defined in `io`
-      val inThread  = Spawn(writeInput(process.getOutputStream), daemon = true)
-      val outThread = Spawn(processOutput(process.getInputStream), daemonizeThreads)
+      val inThread =
+        if (inherit || (writeInput eq BasicIO.connectNoOp)) null
+        else Spawn("Simple-input", daemon = true)(writeInput(process.getOutputStream))
+      val outThread = Spawn("Simple-output", daemonizeThreads)(processOutput(process.getInputStream()))
       val errorThread =
         if (p.redirectErrorStream) Nil
-        else List(Spawn(processError(process.getErrorStream), daemonizeThreads))
+        else List(Spawn("Simple-error", daemonizeThreads)(processError(process.getErrorStream())))
 
       new SimpleProcess(process, inThread, outThread :: errorThread)
     }
@@ -88,7 +100,7 @@ private[process] trait ProcessBuilderImpl {
     protected def toSource = this
     protected def toSink = this
 
-    private val defaultStreamCapacity = 4096
+    private[this] val defaultStreamCapacity = 4096
 
     def #|(other: ProcessBuilder): ProcessBuilder  = {
       require(other.canPipeTo, "Piping to multiple processes is not supported.")
@@ -155,11 +167,18 @@ private[process] trait ProcessBuilderImpl {
       log: Option[ProcessLogger],
       capacity: Integer
     ): LazyList[String] = {
-      val streamed = Streamed[String](nonZeroException, capacity)
-      val process  = run(BasicIO(withInput, streamed.process, log))
+      val lazilyListed = LazilyListed[String](nonZeroException, capacity)
+      val process      = run(BasicIO(withInput, lazilyListed.process, log))
 
-      Spawn(streamed done process.exitValue())
-      streamed.stream()
+      Spawn("LazyLines") {
+        lazilyListed.done {
+          try process.exitValue()
+          catch {
+            case NonFatal(_) => -2
+          }
+        }
+      }
+      lazilyListed.lazyList
     }
 
     private[this] def lineStream(
@@ -171,8 +190,8 @@ private[process] trait ProcessBuilderImpl {
       val streamed = Streamed[String](nonZeroException, capacity)
       val process  = run(BasicIO(withInput, streamed.process, log))
 
-      Spawn(streamed done process.exitValue())
-      streamed.stream() to Stream
+      Spawn("LineStream")(streamed done process.exitValue())
+      streamed.stream()
     }
 
     private[this] def runBuffered(log: ProcessLogger, connectInput: Boolean) =

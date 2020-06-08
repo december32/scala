@@ -1,13 +1,21 @@
-/* NSC -- new Scala compiler
+/*
+ * Scala (https://www.scala-lang.org)
  *
- * Copyright 2011-2013 LAMP/EPFL
- * @author Adriaan Moors
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc.transform.patmat
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.reflect.internal.util.StatisticsStatics
+import scala.tools.nsc.Reporting.WarningCategory
 
 trait TreeAndTypeAnalysis extends Debugging {
   import global._
@@ -101,7 +109,7 @@ trait TreeAndTypeAnalysis extends Debugging {
               // however, must approximate abstract types in
 
               val memberType = nestedMemberType(sym, pre, tpApprox.typeSymbol.owner)
-              val subTp = appliedType(memberType, sym.typeParams.map(_ => WildcardType))
+              val subTp = appliedType(memberType, WildcardType.fillList(sym.typeParams.length))
               val subTpApprox = analyzer.approximateAbstracts(subTp) // TODO: needed?
               // debug.patmat("subtp"+(subTpApprox <:< tpApprox, subTpApprox, tpApprox))
               if (subTpApprox <:< tpApprox) Some(checkableType(subTp))
@@ -119,6 +127,7 @@ trait TreeAndTypeAnalysis extends Debugging {
             // enumerate only direct subclasses,
             // subclasses of subclasses are enumerated in the next iteration
             // and added to a new group
+            @tailrec
             def groupChildren(wl: List[Symbol],
                               acc: List[List[Type]]): List[List[Type]] = wl match {
               case hd :: tl =>
@@ -167,7 +176,7 @@ trait TreeAndTypeAnalysis extends Debugging {
         // See neg/t6771b.scala for elaboration
         def apply(tp: Type): Type = tp.dealias match {
           case TypeRef(pre, sym, args) if args.nonEmpty && (sym ne ArrayClass) =>
-            TypeRef(pre, sym, args map (_ => WildcardType))
+            TypeRef(pre, sym, WildcardType.fillList(args.length))
           case _ =>
             mapOver(tp)
         }
@@ -225,14 +234,14 @@ trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchT
       private[this] val uniqueTypeProps     = new mutable.HashMap[(Tree, Type), Eq]
 
       def uniqueEqualityProp(testedPath: Tree, rhs: Tree): Prop =
-        uniqueEqualityProps getOrElseUpdate((testedPath, rhs), Eq(Var(testedPath), ValueConst(rhs)))
+        uniqueEqualityProps.getOrElseUpdate((testedPath, rhs), Eq(Var(testedPath), ValueConst(rhs)))
 
       // overridden in TreeMakersToPropsIgnoreNullChecks
       def uniqueNonNullProp (testedPath: Tree): Prop =
-        uniqueNonNullProps getOrElseUpdate(testedPath, Not(Eq(Var(testedPath), NullConst)))
+        uniqueNonNullProps.getOrElseUpdate(testedPath, Not(Eq(Var(testedPath), NullConst)))
 
       def uniqueTypeProp(testedPath: Tree, pt: Type): Prop =
-        uniqueTypeProps getOrElseUpdate((testedPath, pt), Eq(Var(testedPath), TypeConst(checkableType(pt))))
+        uniqueTypeProps.getOrElseUpdate((testedPath, pt), Eq(Var(testedPath), TypeConst(checkableType(pt))))
 
       // a variable in this set should never be replaced by a tree that "does not consist of a selection on a variable in this set" (intuitively)
       private val pointsToBound = mutable.HashSet(root)
@@ -282,20 +291,31 @@ trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchT
         def updateSubstitution(subst: Substitution): Unit = {
           // find part of substitution that replaces bound symbols by new symbols, and reverse that part
           // so that we don't introduce new aliases for existing symbols, thus keeping the set of bound symbols minimal
-          val (boundSubst, unboundSubst) = (subst.from zip subst.to) partition {
-            case (f, t) =>
-              t.isInstanceOf[Ident] && t.symbol.exists && pointsToBound(f)
-          }
-          val (boundFrom, boundTo) = boundSubst.unzip
-          val (unboundFrom, unboundTo) = unboundSubst.unzip
 
+          // HOT Method for allocation, hence the imperative style here
+          val substSize = subst.from.length
+          val boundFrom = new mutable.ListBuffer[Tree]()
+          val boundTo = new mutable.ListBuffer[Symbol]
+          val unboundFrom = new mutable.ArrayBuffer[Symbol](substSize)
+          val unboundTo = new mutable.ListBuffer[Tree]
+          foreach2(subst.from, subst.to) {
+            case (f, t: Ident) if t.symbol.exists && pointsToBound(f) =>
+              boundFrom += CODE.REF(f)
+              boundTo += t.symbol
+            case (f, t) =>
+              unboundFrom += f
+              unboundTo += normalize(t)
+          }
           // reverse substitution that would otherwise replace a variable we already encountered by a new variable
           // NOTE: this forgets the more precise type we have for these later variables, but that's probably okay
-          normalize >>= Substitution(boundTo map (_.symbol), boundFrom map (CODE.REF(_)))
+          normalize >>= Substitution(boundTo.toList, boundFrom.toList)
           // debug.patmat ("normalize subst: "+ normalize)
 
-          val okSubst = Substitution(unboundFrom, unboundTo map (normalize(_))) // it's important substitution does not duplicate trees here -- it helps to keep hash consing simple, anyway
-          pointsToBound ++= ((okSubst.from, okSubst.to).zipped filter { (f, t) => pointsToBound exists (sym => t.exists(_.symbol == sym)) })._1
+          val okSubst = Substitution(unboundFrom.toList, unboundTo.toList) // it's important substitution does not duplicate trees here -- it helps to keep hash consing simple, anyway
+          foreach2(okSubst.from, okSubst.to){(f, t) =>
+            if (pointsToBound exists (sym => t.exists(_.symbol == sym)))
+              pointsToBound += f
+          }
           // debug.patmat("pointsToBound: "+ pointsToBound)
 
           accumSubst >>= okSubst
@@ -336,6 +356,7 @@ trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchT
             case AlternativesTreeMaker(_, altss, _)                   => \/(altss map (alts => /\(alts map this)))
             case ProductExtractorTreeMaker(testedBinder, None)        => uniqueNonNullProp(binderToUniqueTree(testedBinder))
             case SubstOnlyTreeMaker(_, _)                             => True
+            case NonNullTestTreeMaker(prevBinder, _, _)               => uniqueNonNullProp(binderToUniqueTree(prevBinder))
             case GuardTreeMaker(guard) =>
               guard.tpe match {
                 case ConstantTrue  => True
@@ -402,9 +423,9 @@ trait MatchAnalysis extends MatchApproximation {
   import global.definitions._
 
   trait MatchAnalyzer extends MatchApproximator  {
-    def uncheckedWarning(pos: Position, msg: String) = currentRun.reporting.uncheckedWarning(pos, msg)
-    def warn(pos: Position, ex: AnalysisBudget.Exception, kind: String) = uncheckedWarning(pos, s"Cannot check match for $kind.\n${ex.advice}")
-    def reportWarning(message: String) = global.reporter.warning(typer.context.tree.pos, message)
+    def uncheckedWarning(pos: Position, msg: String, site: Symbol) = runReporting.warning(pos, msg, WarningCategory.Unchecked, site)
+    def warn(pos: Position, ex: AnalysisBudget.Exception, kind: String, site: Symbol) = uncheckedWarning(pos, s"Cannot check match for $kind.\n${ex.advice}", site)
+    def reportWarning(message: String) = typer.context.warning(typer.context.tree.pos, message, WarningCategory.OtherMatchAnalysis)
 
   // TODO: model dependencies between variables: if V1 corresponds to (x: List[_]) and V2 is (x.hd), V2 cannot be assigned when V1 = null or V1 = Nil
     // right now hackily implement this by pruning counter-examples
@@ -475,7 +496,7 @@ trait MatchAnalysis extends MatchApproximation {
         if (reachable) None else Some(caseIndex)
       } catch {
         case ex: AnalysisBudget.Exception =>
-          warn(prevBinder.pos, ex, "unreachability")
+          warn(prevBinder.pos, ex, "unreachability", prevBinder)
           None // CNF budget exceeded
       }
     }
@@ -527,7 +548,7 @@ trait MatchAnalysis extends MatchApproximation {
 
         try {
           // find the models (under which the match fails)
-          val matchFailModels = findAllModelsFor(propToSolvable(matchFails), prevBinder.pos)
+          val matchFailModels = findAllModelsFor(propToSolvable(matchFails), prevBinder)
 
           val scrutVar = Var(prevBinderTree)
           val counterExamples = {
@@ -547,7 +568,7 @@ trait MatchAnalysis extends MatchApproximation {
           pruned
         } catch {
           case ex: AnalysisBudget.Exception =>
-            warn(prevBinder.pos, ex, "exhaustivity")
+            warn(prevBinder.pos, ex, "exhaustivity", prevBinder)
             Nil // CNF budget exceeded
         }
       }
@@ -591,7 +612,7 @@ trait MatchAnalysis extends MatchApproximation {
       override def coveredBy(other: CounterExample): Boolean =
         other match {
           case other@ListExample(_) =>
-            this == other || ((elems.length == other.elems.length) && (elems zip other.elems).forall{case (a, b) => a coveredBy b})
+            this == other || ((elems.sizeCompare(other.elems) == 0) && (elems zip other.elems).forall{case (a, b) => a coveredBy b})
           case _ => super.coveredBy(other)
         }
 
@@ -603,7 +624,7 @@ trait MatchAnalysis extends MatchApproximation {
       override def coveredBy(other: CounterExample): Boolean =
         other match {
           case TupleExample(otherArgs) =>
-            this == other || ((ctorArgs.length == otherArgs.length) && (ctorArgs zip otherArgs).forall{case (a, b) => a coveredBy b})
+            this == other || ((ctorArgs.sizeCompare(otherArgs) == 0) && (ctorArgs zip otherArgs).forall{case (a, b) => a coveredBy b})
           case _ => super.coveredBy(other)
         }
     }
@@ -617,7 +638,7 @@ trait MatchAnalysis extends MatchApproximation {
     // returns a mapping from variable to
     // equal and notEqual symbols
     def modelToVarAssignment(model: Model): Map[Var, (Seq[Const], Seq[Const])] =
-      model.toSeq.groupBy{f => f match {case (sym, value) => sym.variable} }.mapValues{ xs =>
+      model.toSeq.groupBy(_._1.variable).view.mapValues{ xs =>
         val (trues, falses) = xs.partition(_._2)
         (trues map (_._1.const), falses map (_._1.const))
         // should never be more than one value in trues...
@@ -625,9 +646,8 @@ trait MatchAnalysis extends MatchApproximation {
 
     def varAssignmentString(varAssignment: Map[Var, (Seq[Const], Seq[Const])]) =
       varAssignment.toSeq.sortBy(_._1.toString).map { case (v, (trues, falses)) =>
-         val assignment = "== "+ (trues mkString("(", ", ", ")")) +"  != ("+ (falses mkString(", ")) +")"
-         v +"(="+ v.path +": "+ v.staticTpCheckable +") "+ assignment
-       }.mkString("\n")
+        s"$v(=${v.path}: ${v.staticTpCheckable}) == ${trues.mkString("(", ", ", ")")}  != (${falses.mkString(", ")})"
+      }.mkString("\n")
 
     /**
      * The models we get from the DPLL solver need to be mapped back to counter examples.
@@ -821,7 +841,7 @@ trait MatchAnalysis extends MatchApproximation {
                   val argLen = (caseFieldAccs.length min ctorParams.length)
 
                   val examples = (0 until argLen).map(i => fields.get(caseFieldAccs(i)).map(_.toCounterExample(brevity)) getOrElse Some(WildcardExample)).toList
-                  sequence(examples)
+                  sequenceOpt(examples)
                 }
 
                 cls match {

@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.partest
 
 abstract class MemoryTest {
@@ -5,11 +17,11 @@ abstract class MemoryTest {
   def calcsPerIter: Int
   def calc(): Unit
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     val rt = Runtime.getRuntime()
     def memUsage() = {
       import java.lang.management._
-      import scala.collection.JavaConverters._
+      import scala.jdk.CollectionConverters._
       val pools = ManagementFactory.getMemoryPoolMXBeans.asScala
       pools.map(_.getUsage.getUsed).sum / 1000000d
     }
@@ -32,7 +44,7 @@ abstract class MemoryTest {
     val delta = result - reference
     if (delta > maxDelta) {
       println("FAILED")
-      history foreach (mb => println(mb + " Mb"))
+      history foreach (mb => println(s"$mb Mb"))
     }
   }
 }

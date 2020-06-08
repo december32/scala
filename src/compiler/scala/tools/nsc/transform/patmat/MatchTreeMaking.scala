@@ -1,16 +1,21 @@
-/* NSC -- new Scala compiler
+/*
+ * Scala (https://www.scala-lang.org)
  *
- * Copyright 2011-2013 LAMP/EPFL
- * @author Adriaan Moors
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc.transform.patmat
 
-import scala.language.postfixOps
-
-import scala.tools.nsc.symtab.Flags.{SYNTHETIC, ARTIFACT}
+import scala.annotation.tailrec
 import scala.collection.mutable
-import scala.reflect.internal.util.Position
+import scala.tools.nsc.symtab.Flags.{SYNTHETIC, ARTIFACT}
+import scala.tools.nsc.Reporting.WarningCategory
 
 /** Translate our IR (TreeMakers) into actual Scala Trees using the factory methods in MatchCodeGen.
  *
@@ -39,6 +44,10 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
 
     // for catch (no need to customize match failure)
     def emitTypeSwitch(bindersAndCases: List[(Symbol, List[TreeMaker])], pt: Type): Option[List[CaseDef]] =
+      None
+
+    // Exposed separately from emitTypeSwitch, so that we can do the analysis for simple cases where we skip emitTypeSwitch
+    def unreachableTypeSwitchCase(cases: List[CaseDef]): Option[CaseDef] =
       None
 
     abstract class TreeMaker {
@@ -137,14 +146,14 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
       // sub patterns bound to wildcard (_) are never stored as they can't be referenced
       // dirty debuggers will have to get dirty to see the wildcards
       lazy val storedBinders: Set[Symbol] =
-        (if (debugInfoEmitVars) subPatBinders.toSet else Set.empty) ++ extraStoredBinders -- ignoredSubPatBinders
+        (if (debugInfoEmitVars) subPatBinders.toSet else Set.empty) ++ extraStoredBinders diff ignoredSubPatBinders
 
       // e.g., mutable fields of a case class in ProductExtractorTreeMaker
       def extraStoredBinders: Set[Symbol]
 
       def emitVars = storedBinders.nonEmpty
 
-      private lazy val (stored, substed) = (subPatBinders, subPatRefs).zipped.partition{ case (sym, _) => storedBinders(sym) }
+      private lazy val (stored, substed) = subPatBinders.lazyZip(subPatRefs).partition{ case (sym, _) => storedBinders(sym) }
 
       protected lazy val localSubstitution: Substitution = if (!emitVars) Substitution(subPatBinders, subPatRefs)
         else {
@@ -170,12 +179,17 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
           def ref(sym: Symbol) =
             if (potentiallyStoredBinders(sym)) usedBinders += sym
           // compute intersection of all symbols in the tree `in` and all potentially stored subpat binders
-          in.foreach {
-            case tt: TypeTree =>
-              tt.tpe foreach { // scala/bug#7459 e.g. case Prod(t) => new t.u.Foo
+          val typeTraverser = new TypeTraverser {
+            def traverse(tp: Type) = {
+              tp match {
                 case SingleType(_, sym) => ref(sym)
                 case _ =>
               }
+              mapOver(tp)
+            }
+          }
+          in.foreach {
+            case tt: TypeTree => typeTraverser.apply(tt.tpe)
             case t => ref(t.symbol)
           }
 
@@ -186,6 +200,32 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
             Block(map2(subPatBindersStored.toList, subPatRefsStored.toList)(ValDef(_, _)), in)
           }
         }
+    }
+
+    /**
+     * Make a TreeMaker that performs null check.
+     * This is called prior to extractor call.
+     */
+    case class NonNullTestTreeMaker(
+       prevBinder: Symbol,
+       expectedTp: Type,
+       override val pos: Position) extends FunTreeMaker {
+      import CODE._
+      override lazy val nextBinder = prevBinder.asTerm // just passing through
+      val nextBinderTp = nextBinder.info.widen
+
+      val nullCheck = REF(prevBinder) OBJ_NE NULL
+      lazy val localSubstitution = Substitution(Nil, Nil)
+
+      def isExpectedPrimitiveType = isPrimitiveValueType(expectedTp)
+
+      def chainBefore(next: Tree)(casegen: Casegen): Tree =
+        atPos(pos) {
+          if (isExpectedPrimitiveType) next
+          else casegen.ifThenElseZero(nullCheck, next)
+        }
+
+      override def toString = s"NN(${prevBinder.name})"
     }
 
     /**
@@ -263,24 +303,16 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
           val subPatBinders: List[Symbol],
           val subPatRefs: List[Tree],
           val mutableBinders: List[Symbol],
-          binderKnownNonNull: Boolean,
           val ignoredSubPatBinders: Set[Symbol]
          ) extends FunTreeMaker with PreserveSubPatBinders {
 
-      import CODE._
       val nextBinder = prevBinder // just passing through
 
       // mutable binders must be stored to avoid unsoundness or seeing mutation of fields after matching (scala/bug#5158, scala/bug#6070)
       def extraStoredBinders: Set[Symbol] = mutableBinders.toSet
 
       def chainBefore(next: Tree)(casegen: Casegen): Tree = {
-        val nullCheck = REF(prevBinder) OBJ_NE NULL
-        val cond =
-          if (binderKnownNonNull) extraCond
-          else (extraCond map (nullCheck AND _)
-          orElse Some(nullCheck))
-
-        cond match {
+        extraCond match {
           case Some(cond) =>
             casegen.ifThenElseZero(cond, bindSubPats(substitution(next)))
           case _ =>
@@ -343,8 +375,9 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
           // Check if a type is defined in a static location. Unlike `tp.isStatic` before `flatten`,
           // this also includes methods and (possibly nested) objects inside of methods.
           def definedInStaticLocation(tp: Type): Boolean = {
+            @tailrec
             def isStatic(tp: Type): Boolean =
-              if (tp == NoType || tp.typeSymbol.isPackageClass || tp == NoPrefix) true
+              if (tp == NoType || tp.typeSymbol.isPackageClass || tp == NoPrefix || nme.isReplWrapperName(tp.typeSymbol.name)) true
               else if (tp.typeSymbol.isModuleClass) isStatic(tp.prefix)
               else false
             tp.typeSymbol.owner == tp.prefix.typeSymbol && isStatic(tp.prefix)
@@ -424,7 +457,7 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
       // a `prevBinder` is expected to have type `expectedTp`
       // the actual tree-generation logic is factored out, since the analyses generate Cond(ition)s rather than Trees
       // TODO: `null match { x : T }` will yield a check that (indirectly) tests whether `null ne null`
-      // don't bother (so that we don't end up with the warning "comparing values of types Null and Null using `ne' will always yield false")
+      // don't bother (so that we don't end up with the warning "comparing values of types Null and Null using `ne` will always yield false")
       def renderCondition(cs: TypeTestCondStrategy): cs.Result = {
         import cs._
 
@@ -597,9 +630,9 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
           }
 
         emitSwitch(scrut, scrutSym, casesNoSubstOnly, pt, matchFailGenOverride, unchecked = suppression.suppressExhaustive).getOrElse{
-          if (requireSwitch) reporter.warning(scrut.pos, "could not emit switch for @switch annotated match")
+          if (requireSwitch) typer.context.warning(scrut.pos, "could not emit switch for @switch annotated match", WarningCategory.OtherMatchAnalysis)
 
-          if (casesNoSubstOnly nonEmpty) {
+          if (!casesNoSubstOnly.isEmpty) {
             // before optimizing, check casesNoSubstOnly for presence of a default case,
             // since DCE will eliminate trivial cases like `case _ =>`, even if they're the last one
             // exhaustivity and reachability must be checked before optimization as well
@@ -619,7 +652,7 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
 
             val matchRes = codegen.matcher(scrut, scrutSym, pt)(cases map combineExtractors, synthCatchAll)
 
-            if (toHoist isEmpty) matchRes else Block(toHoist, matchRes)
+            if (toHoist.isEmpty) matchRes else Block(toHoist, matchRes)
           } else {
             codegen.matcher(scrut, scrutSym, pt)(Nil, matchFailGen)
           }

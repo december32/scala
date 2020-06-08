@@ -12,11 +12,23 @@ object ScriptCommands {
   def env(key: String) = Option(System.getenv(key)).getOrElse("")
 
   def all = Seq(
+    setupPublishCoreNonOpt,
     setupPublishCore,
     setupValidateTest,
     setupBootstrapStarr, setupBootstrapLocker, setupBootstrapQuick, setupBootstrapPublish,
     enableOptimizerCommand
   )
+
+  /** Set up the environment for `validate/publish-core`.
+   * The optional argument is the Artifactory snapshot repository URL. */
+  def setupPublishCoreNonOpt = setup("setupPublishCoreNonOpt") { args =>
+    Seq(
+      baseVersionSuffix in Global := "SHA-SNAPSHOT"
+    ) ++ (args match {
+      case Seq(url) => publishTarget(url)
+      case Nil => Nil
+    }) ++ noDocs
+  }
 
   /** Set up the environment for `validate/publish-core`.
     * The optional argument is the Artifactory snapshot repository URL. */
@@ -99,22 +111,15 @@ object ScriptCommands {
   def enableOptimizerCommand = setup("enableOptimizer")(_ => enableOptimizer)
 
   private[this] def setup(name: String)(f: Seq[String] => Seq[Setting[_]]) = Command.args(name, name) { case (state, seq) =>
-    // `Project.extract(state).append(f(seq), state)` would be simpler, but it
-    // takes the project's initial state and discards all changes that were made in the sbt console.
-    val session = Project.session(state)
-    val extracted = Project.extract(state)
-    val settings = f(seq)
-    val appendSettings = Load.transformSettings(Load.projectScope(extracted.currentRef), extracted.currentRef.build, extracted.rootProject, settings)
-    val newStructure = Load.reapply(session.mergeSettings ++ appendSettings, extracted.structure)(extracted.showKey)
-    Project.setProject(session, newStructure, state)
+    Project.extract(state).appendWithSession(f(seq), state)
   }
 
   private[this] val enableOptimizer = Seq(
-    scalacOptions in Compile in ThisBuild ++= Seq("-opt:l:inline", "-opt-inline-from:scala/**")
+    ThisBuild / Compile / scalacOptions ++= Seq("-opt:l:inline", "-opt-inline-from:scala/**")
   )
 
-  private[this] val noDocs = Seq(
-    publishArtifact in (Compile, packageDoc) in ThisBuild := false
+  val noDocs = Seq(
+    ThisBuild / Compile / packageDoc / publishArtifact := false
   )
 
   private[this] def publishTarget(url: String) = {
@@ -122,8 +127,8 @@ object ScriptCommands {
     val url2 = if(url.startsWith("file:")) url else url.replaceAll("/$", "") + ";build.timestamp=" + System.currentTimeMillis
 
     Seq(
-      publishTo in Global := Some("scala-pr-publish" at url2),
-      credentials in Global += Credentials("Artifactory Realm", "scala-ci.typesafe.com", "scala-ci", env("PRIVATE_REPO_PASS"))
+      Global / publishTo := Some("scala-pr-publish" at url2),
+      Global / credentials += Credentials("Artifactory Realm", "scala-ci.typesafe.com", "scala-ci", env("PRIVATE_REPO_PASS"))
     )
   }
 

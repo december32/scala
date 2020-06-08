@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Paul Phillips
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc.interpreter
@@ -14,7 +21,7 @@ import scala.util.matching.Regex
 object Naming {
   def unmangle(str: String): String = {
     val ESC = '\u001b'
-    val cleaned = removeIWPackages(removeLineWrapper(str))
+    val cleaned = lineRegex.replaceAllIn(str, "")
     // Looking to exclude binary data which hoses the terminal, but
     // let through the subset of it we need, like whitespace and also
     // <ESC> for ansi codes.
@@ -33,18 +40,24 @@ object Naming {
       cleaned map (ch => if (ch.isWhitespace || ch == ESC) ch else if (ch < 32) '?' else ch)
   }
 
+  // Uncompiled regex pattern to detect `line` package and members
+  // `read`, `eval`, `print`, for purposes of filtering output and stack traces.
+  //
   // The two name forms this is catching are the two sides of this assignment:
   //
-  // $line3.$read.$iw.$iw.Bippy =
-  //   $line3.$read$$iw$$iw$Bippy@4a6a00ca
-  lazy val lineRegex = {
+  // $line3.$read.$iw.Bippy =
+  //   $line3.$read$$iw$$Bippy@4a6a00ca
+  lazy val lineRegex: Regex = {
     val sn = sessionNames
-    val members = List(sn.read, sn.eval, sn.print) map Regex.quote mkString("(?:", "|", ")")
-    Regex.quote(sn.line) + """\d+[./]""" + members + """[$.]"""
+    import Regex.{quote => q}
+    val lineN = q(sn.line) + """\d+"""
+    val lineNRead = lineN + raw"""(${q(sn.read)})?"""
+    // This needs to be aware of LambdaMetafactory generated classnames to strip the correct number of '$' delimiters.
+    // A lambda hosted in a module `$iw` (which has a module class `$iw$` is named `$iw$ $ $Lambda1234` (spaces added
+    // here for clarification.) This differs from an explicitly declared inner classes named `$Foo`, which would be
+    // `$iw$$Foo`.
+    (raw"""($lineNRead|${q(sn.read)}(\.INSTANCE)?(\$$${q(sn.iw)})?|${q(sn.eval)}|${q(sn.print)}|${q(sn.iw)})""" + """(\.this\.|\.|/|\$\$(?=\$Lambda)|\$|$)""").r
   }
-
-  private def removeLineWrapper(s: String) = s.replaceAll(lineRegex, "")
-  private def removeIWPackages(s: String)  = s.replaceAll("""\$iw[$.]""", "")
 
   object sessionNames {
     // All values are configurable by passing e.g. -Dscala.repl.name.read=XXX
@@ -54,10 +67,15 @@ object Naming {
 
     // Prefixes used in repl machinery.  Default to $line, $read, etc.
     def line = propOr("line")
-    def read = propOr("read")
+    def read = "$" + "read"
+    def iw = "$" + "iw"
     def eval = propOr("eval")
     def print = propOr("print")
     def result = propOr("result")
+    def packageName(lineId: Int) = line + lineId
+
+    /** Create the name for the temp val used in the -Yclass-based REPL wrapper to refer to the state of a previous line. */
+    final def lineReadValName(linePackageName: String) = s"${linePackageName}${read}"
 
     // The prefix for unnamed results: by default res0, res1, etc.
     def res = propOr("res", "res") // INTERPRETER_VAR_PREFIX
@@ -94,7 +112,7 @@ trait Naming {
   def freshInternalVarName() = internalVar()
   def freshLineId() = { _freshLineId += 1 ; _freshLineId}
 
-  def resetAllCreators() {
+  def resetAllCreators(): Unit = {
     userVar.reset()
     internalVar.reset()
     _freshLineId = 0

@@ -1,22 +1,30 @@
 # Welcome!
-This is the official repository for the [Scala Programming Language](http://www.scala-lang.org).
+
+This is the official repository for the [Scala Programming Language](http://www.scala-lang.org)
+standard library, compiler, and language spec.
 
 # How to contribute
 
-To contribute to the Scala standard library, Scala compiler, and Scala Language Specification, please send us a [pull request](https://help.github.com/articles/using-pull-requests/#fork--pull) from your fork of this repository.
+Issues and bug reports for _scala/scala_ are located in [scala/bug](https://github.com/scala/bug). This tracker is also where new contributors may find [good first issues](https://github.com/scala/bug/labels/good%20first%20issue) to work on.
 
-We do have to ask you to sign the [Scala CLA](http://www.lightbend.com/contribute/cla/scala) before we can merge any of your work into our code base, to protect its open source nature.
+To contribute in this repo, please open a [pull request](https://help.github.com/articles/using-pull-requests/#fork--pull) from your fork of this repository.
 
-For more information on building and developing the core of Scala, make sure to read
-the rest of this README!
+For coordinating bigger work items, we use the [scala/scala-dev tracker](https://github.com/scala/scala-dev/issues).
+
+We do have to ask you to sign the [Scala CLA](http://www.lightbend.com/contribute/cla/scala) before we can merge any of your work, to protect its open source nature.
+
+The general workflow is as follows.
+1. Find/file an issue in scala/bug (or submit a well-documented PR right away!).
+2. Fork the scala/scala repo.
+3. Push your changes to a branch in your forked repo. For coding guidelines, go [here](https://github.com/scala/scala#coding-guidelines).
+4. Submit a pull request to scala/scala from your forked repo.
+
+For more information on building and developing the core of Scala, make sure to read the rest of this README, especially for [setting up your machine](https://github.com/scala/scala#get-ready-to-contribute)!
 
 In order to get in touch with other Scala contributors, join
 [scala/contributors](https://gitter.im/scala/contributors) (Gitter) or post on
 [contributors.scala-lang.org](http://contributors.scala-lang.org) (Discourse).
 
-# Reporting issues
-
-Please report bugs at the [scala/bug issue tracker](https://github.com/scala/bug/issues). We use the [scala/scala-dev tracker](https://github.com/scala/scala-dev/issues) for coordinating bigger work items.
 
 # Get in touch!
 
@@ -25,17 +33,17 @@ If you need some help with your PR at any time, please feel free to @-mention an
 |                                                                                                 | username                                                       | talk to me about...                               |
 --------------------------------------------------------------------------------------------------|----------------------------------------------------------------|---------------------------------------------------|
  <img src="https://avatars.githubusercontent.com/adriaanm"      height="50px" title="Adriaan Moors"/>        | [`@adriaanm`](https://github.com/adriaanm)           | type checker, pattern matcher, infrastructure, language spec |
- <img src="https://avatars.githubusercontent.com/SethTisue"     height="50px" title="Seth Tisue"/>           | [`@SethTisue`](https://github.com/SethTisue)         | build, developer docs, community build, Jenkins, library, the welcome-to-Scala experience |
+ <img src="https://avatars.githubusercontent.com/SethTisue"     height="50px" title="Seth Tisue"/>           | [`@SethTisue`](https://github.com/SethTisue)         | getting started, build, developer docs, community build, Jenkins, library |
  <img src="https://avatars.githubusercontent.com/retronym"      height="50px" title="Jason Zaugg"/>          | [`@retronym`](https://github.com/retronym)           | compiler performance, weird compiler bugs, Java 8 lambdas, REPL |
+ <img src="https://avatars.githubusercontent.com/szeiger"       height="50px" title="Stefan Zeiger"/>        | [`@szeiger`](https://github.com/szeiger)             | collections, build |
+ <img src="https://avatars.githubusercontent.com/lrytz"         height="50px" title="Lukas Rytz"/>           | [`@lrytz`](https://github.com/lrytz)                 | back end, optimizer, named & default arguments, reporters       |
  <img src="https://avatars.githubusercontent.com/Ichoran"       height="50px" title="Rex Kerr"/>             | [`@Ichoran`](https://github.com/Ichoran)             | collections library, performance              |
- <img src="https://avatars.githubusercontent.com/lrytz"         height="50px" title="Lukas Rytz"/>           | [`@lrytz`](https://github.com/lrytz)                 | optimizer, named & default arguments              |
- <img src="https://avatars.githubusercontent.com/VladUreche"    height="50px" title="Vlad Ureche"/>          | [`@VladUreche`](https://github.com/VladUreche)       | specialization, Scaladoc tool |
- <img src="https://avatars.githubusercontent.com/densh"         height="50px" title="Denys Shabalin"/>       | [`@densh`](https://github.com/densh)                 | quasiquotes, parser, string interpolators, macros in standard library |
- <img src="https://avatars.githubusercontent.com/xeno-by"       height="50px" title="Eugene Burmako"/>       | [`@xeno-by`](https://github.com/xeno-by)             | macros and reflection |
- <img src="https://avatars.githubusercontent.com/heathermiller" height="50px" title="Heather Miller"/>      | [`@heathermiller`](https://github.com/heathermiller)  | documentation |
+ <img src="https://avatars.githubusercontent.com/viktorklang"   height="50px" title="Viktor Klang"/>         | [`@viktorklang`](https://github.com/viktorklang)     | concurrency, futures |
+ <img src="https://avatars.githubusercontent.com/axel22"        height="50px" title="Aleksandr Prokopec"/>   | [`@axel22`](https://github.com/axel22)               | concurrency, parallel collections, specialization |
  <img src="https://avatars.githubusercontent.com/dragos"        height="50px" title="Iulian Dragos"/>        | [`@dragos`](https://github.com/dragos)               | specialization, back end |
- <img src="https://avatars.githubusercontent.com/axel22"        height="50px" title="Aleksandr Prokopec"/>   | [`@axel22`](https://github.com/axel22)               | collections, concurrency, specialization |
  <img src="https://avatars.githubusercontent.com/janekdb"       height="50px" title="Janek Bogucki"/>        | [`@janekdb`](https://github.com/janekdb)             | documentation |
+ <img src="https://avatars.githubusercontent.com/sjrd"          height="50px" title="Sébastien Doeraene"/>   | [`@sjrd`](https://github.com/sjrd)             | interactions with Scala.js |
+  <img src="https://avatars.githubusercontent.com/NthPortal"          height="50px" title="Princess \| April"/>   | [`@NthPortal`](https://github.com/NthPortal)             | library, concurrency, `scala.math`, `LazyList`, `Using` |
 
 P.S.: If you have some spare time to help out around here, we would be delighted to add your name to this list!
 
@@ -56,6 +64,7 @@ scala/
 +--test/                     The Scala test suite
    +---/files                Partest tests
    +---/junit                JUnit tests
+   +---/scalacheck           ScalaCheck tests
 +--build/                    [Generated] Build output directory
 ```
 
@@ -67,10 +76,9 @@ You need the following tools:
   - Java SDK. The baseline version is 8 for both 2.12.x and 2.13.x. It may be possible to use a
     later SDK for local development, but the CI will verify against the baseline
     version.
-  - sbt. We recommend the [sbt-extras](https://github.com/paulp/sbt-extras) runner
-    script. It provides sensible default jvm options (stack and heap size).
+  - sbt (sbt 0.13 on the 2.12.x branch, sbt 1 on the 2.13.x branch)
 
-Mac OS X and Linux work. Windows may work if you use Cygwin. Community help with keeping
+MacOS and Linux work. Windows may work if you use Cygwin. Community help with keeping
 the build working on Windows is appreciated.
 
 ## Tools we use
@@ -85,8 +93,8 @@ We are grateful for the following OSS licenses:
 ### Basics
 
 During ordinary development, a new Scala build is built by the
-previously released version.  For short we call the previous release
-"starr": the stable reference Scala release.  Building with starr is
+previously released version. For short, we call the previous release
+"starr": the stable reference release.  Building with starr is
 sufficient for most kinds of changes.
 
 However, a full build of Scala (a *bootstrap*, as performed by our CI)
@@ -106,15 +114,18 @@ Once you've started an `sbt` session you can run one of the core commands:
   - `compile` compiles all sub-projects (library, reflect, compiler, scaladoc, etc)
   - `scala` / `scalac` run the REPL / compiler directly from sbt (accept options /
     arguments)
+  - `enableOptimizer` reloads the build with the Scala optimizer enabled. Our releases are built this way. Enable this when working on compiler performance improvements. When the optimizer is enabled the build will be slower and incremental builds can be incorrect.
+  - `setupPublishCore` which runs `enableOptimizer` and also configures a version number based on the current Git SHA. Often used as part of bootstrapping `sbt setupPublishCore publishLocal && sbt -Dstarr.version=<VERSION> testAll`
   - `dist/mkBin` generates runner scripts (`scala`, `scalac`, etc) in `build/quick/bin`
   - `dist/mkPack` creates a build in the Scala distribution format in `build/pack`
   - `test` runs the JUnit test, `testOnly *immutable.ListTest` runs a subset
   - `partest` runs partest tests (accepts options, try `partest --help`)
+  - `scalacheck/test` runs scalacheck tests, `scalacheck/testOnly *FloatFormatTest` runs a subset
   - `publishLocal` publishes a distribution locally (can be used as `scalaVersion` in
     other sbt projects)
-    - Optionally `set baseVersionSuffix := "-bin-abcd123-SNAPSHOT"`
+    - Optionally `set baseVersionSuffix := "bin-abcd123-SNAPSHOT"`
       where `abcd123` is the git hash of the revision being published. You can also
-      use something custom like `"-bin-mypatch"`. This changes the version number from
+      use something custom like `"bin-mypatch"`. This changes the version number from
       `2.12.2-SNAPSHOT` to something more stable (`2.12.2-bin-abcd123-SNAPSHOT`).
     - Note that the `-bin` string marks the version binary compatible. Using it in
       sbt will cause the `scalaBinaryVersion` to be `2.12`. If the version is not
@@ -123,9 +134,9 @@ Once you've started an `sbt` session you can run one of the core commands:
       to skip generating / publishing API docs (speeds up the process).
 
 If a command results in an error message like `a module is not authorized to depend on
-itself`, it may be that a global SBT plugin (such as [Ensime](http://ensime.org/)) is
-resulting in a cyclical dependency. Try disabling global SBT plugins (perhaps by
-temporarily commenting them out in `~/.sbt/0.13/plugins/plugins.sbt`).
+itself`, it may be that a global sbt plugin is
+resulting in a cyclical dependency. Try disabling global sbt plugins (perhaps by
+temporarily commenting them out in `~/.sbt/1.0/plugins/plugins.sbt`).
 
 #### Sandbox
 
@@ -138,8 +149,6 @@ Note that sbt's incremental compilation is often too coarse for the Scala compil
 codebase and re-compiles too many files, resulting in long build times (check
 [sbt#1104](https://github.com/sbt/sbt/issues/1104) for progress on that front). In the
 meantime you can:
-  - Enable "Ant mode" in which sbt only re-compiles source files that were modified.
-    Create a file `local.sbt` containing the line `antStyle := true`.
   - Use IntelliJ IDEA for incremental compiles (see [IDE Setup](#ide-setup) below) - its
     incremental compiler is a bit less conservative, but usually correct.
 
@@ -157,24 +166,15 @@ Assume the current `starr` version is `2.12.0` (defined in
     generating API docs, see above).
   - Quit sbt and start a new sbt instance using `sbt -Dstarr.version=<version>` where
     `<version>` is the version number you published locally.
-  - If the version number you published is not binary compatible with the current
-    `starr`, `set every scalaBinaryVersion := "2.12.0-M4"`. This is not required if
-    the version you published locally is binary compatible, i.e., if the current
-    `starr` is a 2.12.x release and not a milestone / RC.
-
-The last step is required to resolve modules (scala-partest, etc). It
-assumes that the module releases for the current `starr` work (in terms of binary
-compatibility) with the local starr that you published locally. A full bootstrap
-requires re-building the all the modules. On our CI this is handled by the
-[bootstrap](scripts/jobs/integrate/bootstrap) script, but it (currently) cannot
-be easily executed locally.
 
 ### IDE setup
 
-You may use IntelliJ IDEA (see [src/intellij/README.md](src/intellij/README.md)),
-or ENSIME (see [this page on the ENSIME site](http://ensime.org/editors/)).
-(Support for Eclipse has decayed and been removed, but could be resurrected by
-a volunteer.)
+We suggest using IntelliJ IDEA (see
+[src/intellij/README.md](src/intellij/README.md)).
+
+([Metals](https://scalameta.org/metals/) should also work, but we don't yet have instructions or sample
+configuration for that. A pull request in this area would be
+exceedingly welcome.)
 
 In order to use IntelliJ's incremental compiler:
   - run `dist/mkBin` in sbt to get a build and the runner scripts in `build/quick/bin`
@@ -198,6 +198,8 @@ You may also want to check out the following resources:
   - [Scala documentation site](http://docs.scala-lang.org)
 
 # Scala CI
+
+[![Build Status](https://travis-ci.org/scala/scala.svg?branch=2.13.x)](https://travis-ci.org/scala/scala)
 
 Once you submit a PR your commits will be automatically tested by the Scala CI.
 
@@ -229,12 +231,9 @@ $ sbt
 > console
 ```
 
-Note that the scala modules are currently not built/published against the
-tested version during CI validation.
-
 ## Nightly builds
 
-The Scala CI builds nightly download releases (including all modules) and publishes
+The Scala CI builds nightly download releases and publishes
 them to the following locations:
   - [2.12.x](http://www.scala-lang.org/files/archive/nightly/2.12.x/?C=M;O=D)
   - [2.13.x](http://www.scala-lang.org/files/archive/nightly/2.13.x/?C=M;O=D)
@@ -258,14 +257,14 @@ after an LGTM comment is in the [scala/scabot](https://github.com/scala/scabot) 
 
 ## Community build
 
-The Scala community build is a central element for testing Scala
+The Scala community build is an important method for testing Scala
 releases. A community build can be launched for any Scala commit, even
 before the commit's PR has been merged. That commit is then used to
 build a large number of open-source projects from source and run their
 test suites.
 
 To request a community build run on your PR, just ask in a comment on
-the PR and a Scala team member will take care of
+the PR and a Scala team member (probably @SethTisue) will take care of
 it. ([details](https://github.com/scala/community-builds/wiki#can-i-run-it-against-a-pull-request-in-scalascala))
 
 Community builds run on the Scala Jenkins instance.  The jobs are

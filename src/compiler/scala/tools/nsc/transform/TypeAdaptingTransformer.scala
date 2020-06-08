@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.nsc
 package transform
 
@@ -49,7 +61,7 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
               else BLOCK(tree, REF(BoxedUnit_UNIT))
             case NothingClass => tree // a non-terminating expression doesn't need boxing
             case x =>
-              assert(x != ArrayClass)
+              assert(x != ArrayClass, "array")
               tree match {
                 case Apply(boxFun, List(arg)) if isSafelyRemovableUnbox(tree, arg) =>
                   arg
@@ -84,7 +96,7 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
               case UnitClass  =>
                 preservingSideEffects(tree, UNIT)
               case x          =>
-                assert(x != ArrayClass)
+                assert(x != ArrayClass, "array")
                 // don't `setType pt` the Apply tree, as the Apply's fun won't be typechecked if the Apply tree already has a type
                 Apply(currentRun.runDefinitions.unboxMethod(pt.typeSymbol), tree)
             }
@@ -101,7 +113,7 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
 
     /** Generate a synthetic cast operation from tree.tpe to pt.
       *
-      *  @pre pt eq pt.normalize
+      *  @note Pre-condition: pt eq pt.normalize
      */
     final def cast(tree: Tree, pt: Type): Tree = {
       if (settings.debug && (tree.tpe ne null) && !(tree.tpe =:= ObjectTpe)) {
@@ -115,6 +127,9 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
       }
       if (pt =:= UnitTpe) {
         // See scala/bug#4731 for one example of how this occurs.
+        // TODO: that initial fix was quite symptomatic (the real problem was that it allowed an illegal override,
+        // which resulted in types being so out of whack that'd case something to unit where we shouldn't),
+        // so I'm not sure this case actually still arises.
         log("Attempted to cast to Unit: " + tree)
         tree.duplicate setType pt
       } else if (tree.tpe != null && tree.tpe.typeSymbol == ArrayClass && pt.typeSymbol == ArrayClass) {

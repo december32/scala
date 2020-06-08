@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 // todo. we need to unify this prettyprinter with NodePrinters
@@ -9,9 +16,10 @@ package scala
 package reflect
 package internal
 
-import java.io.{ OutputStream, PrintWriter, Writer }
+import java.io.{OutputStream, PrintWriter, Writer}
 import Flags._
 import java.lang.System.{lineSeparator => EOL}
+import scala.annotation.tailrec
 
 trait Printers extends api.Printers { self: SymbolTable =>
 
@@ -202,8 +210,8 @@ trait Printers extends api.Printers { self: SymbolTable =>
       annots foreach (annot => print(s"@$annot "))
     }
 
-    private var currentOwner: Symbol = NoSymbol
-    private var selectorType: Type = NoType
+    private[this] var currentOwner: Symbol = NoSymbol
+    private[this] var selectorType: Type = NoType
 
     protected def printPackageDef(tree: PackageDef, separator: String) = {
       val PackageDef(packaged, stats) = tree
@@ -249,20 +257,18 @@ trait Printers extends api.Printers { self: SymbolTable =>
 
     protected def printImport(tree: Import, resSelect: => String) = {
       val Import(expr, selectors) = tree
-      // Is this selector renaming a name (i.e, {name1 => name2})
-      def isNotRename(s: ImportSelector): Boolean =
-        s.name == nme.WILDCARD || s.name == s.rename
 
       def selectorToString(s: ImportSelector): String = {
-        val from = quotedName(s.name)
-        if (isNotRename(s)) from
-        else from + "=>" + quotedName(s.rename)
+        def selectorName(n: Name): String = if (s.isWildcard) nme.WILDCARD.decoded else quotedName(n)
+        val from = selectorName(s.name)
+        if (s.isRename || s.isMask) from + "=>" + selectorName(s.rename)
+        else from
       }
       print("import ", resSelect, ".")
       selectors match {
         case List(s) =>
-          // If there is just one selector and it is not renaming a name, no braces are needed
-          if (isNotRename(s)) print(selectorToString(s))
+          // If there is just one selector and it is not renaming or masking a name, no braces are needed
+          if (!s.isRename && !s.isMask) print(selectorToString(s))
           else print("{", selectorToString(s), "}")
         // If there is more than one selector braces are always needed
         case many =>
@@ -273,7 +279,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
     protected def printCaseDef(tree: CaseDef) = {
       val CaseDef(pat, guard, body) = tree
       print("case ")
-      def patConstr(pat: Tree): Tree = pat match {
+      @tailrec def patConstr(pat: Tree): Tree = pat match {
         case Apply(fn, args) => patConstr(fn)
         case _ => pat
       }
@@ -299,10 +305,15 @@ trait Printers extends api.Printers { self: SymbolTable =>
     }
 
     protected def printSuper(tree: Super, resultName: => String, checkSymbol: Boolean = true) = {
-      val Super(This(qual), mix) = tree
+      val Super(This(qual), mix) = tree: @unchecked
       if (qual.nonEmpty || (checkSymbol && tree.symbol != NoSymbol)) print(resultName + ".")
       print("super")
       if (mix.nonEmpty) print(s"[$mix]")
+      else if (settings.debug) tree.tpe match {
+        case st: SuperType => print(s"[${st.supertpe}]")
+        case tp: Type => print(s"[$tp]")
+        case _ =>
+      }
     }
 
     protected def printThis(tree: This, resultName: => String) = {
@@ -477,7 +488,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
           }
 
         case an @ Annotated(Apply(Select(New(tpt), nme.CONSTRUCTOR), args), tree) =>
-          def printAnnot() {
+          def printAnnot(): Unit = {
             print("@", tpt)
             if (args.nonEmpty)
               printRow(args, "(", ",", ")")
@@ -619,11 +630,14 @@ trait Printers extends api.Printers { self: SymbolTable =>
     val defaultClasses = List(tpnme.AnyRef, tpnme.Object)
     val defaultTraitsForCase = List(tpnme.Product, tpnme.Serializable)
     protected def removeDefaultTypesFromList(trees: List[Tree])(classesToRemove: List[Name] = defaultClasses)(traitsToRemove: List[Name]) = {
+      @tailrec
       def removeDefaultTraitsFromList(trees: List[Tree], traitsToRemove: List[Name]): List[Tree] =
         trees match {
           case Nil => trees
           case init :+ last => last match {
-            case Select(Ident(sc), name) if traitsToRemove.contains(name) && sc == nme.scala_ =>
+            case Select(Select(Ident(nme.scala_), nme.PACKAGE), name) if traitsToRemove.contains(name) =>
+              removeDefaultTraitsFromList(init, traitsToRemove)
+            case Select(Ident(nme.scala_), name) if traitsToRemove.contains(name) =>
               removeDefaultTraitsFromList(init, traitsToRemove)
             case _ => trees
           }
@@ -848,7 +862,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
           val printedParents =
             currentParent map {
               case _: CompoundTypeTree => parents
-              case ClassDef(mods, name, _, _) if mods.isCase => removeDefaultTypesFromList(parents)()(List(tpnme.Product, tpnme.Serializable))
+              case ClassDef(mods, name, _, _) if mods.isCase => removeDefaultTypesFromList(parents)()(defaultTraitsForCase)
               case _ => removeDefaultClassesFromList(parents)
             } getOrElse (parents)
 
@@ -871,7 +885,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
             }
 
           if (printedParents.nonEmpty) {
-            val (clParent :: traits) = printedParents
+            val (clParent :: traits) = printedParents: @unchecked
             print(clParent)
 
             val constrArgss = ap match {
@@ -981,7 +995,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
           tree match {
             // processing methods ending on colons (x \: list)
             case Apply(Block(l1 @ List(sVD: ValDef), a1 @ Apply(Select(_, methodName), l2 @ List(Ident(iVDName)))), l3)
-              if sVD.mods.isSynthetic && treeInfo.isLeftAssoc(methodName) && sVD.name == iVDName =>
+              if sVD.mods.isSynthetic && nme.isLeftAssoc(methodName) && sVD.name == iVDName =>
               val printBlock = Block(l1, Apply(a1, l3))
               print(printBlock)
             case Apply(tree1, _) if (needsParentheses(tree1)(insideAnnotated = false)) =>
@@ -1016,6 +1030,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
           print(qual)
 
         case Select(qual, name) =>
+          @tailrec
           def checkRootPackage(tr: Tree): Boolean =
             (currentParent match { //check that Select is not for package def name
               case Some(_: PackageDef) => false
@@ -1047,7 +1062,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
 
         case Literal(k @ Constant(s: String)) if s.contains(Chars.LF) =>
           val tq = "\"" * 3
-          val lines = s.lines.toList
+          val lines = s.linesIterator.toList
           if (lines.lengthCompare(1) <= 0) print(k.escapedStringValue)
           else {
             val tqp = """["]{3}""".r
@@ -1121,9 +1136,9 @@ trait Printers extends api.Printers { self: SymbolTable =>
    * output stream.
    */
   object ConsoleWriter extends Writer {
-    override def write(str: String) { Console.print(str) }
+    override def write(str: String): Unit = { Console.print(str) }
 
-    def write(cbuf: Array[Char], off: Int, len: Int) {
+    def write(cbuf: Array[Char], off: Int, len: Int): Unit = {
       write(new String(cbuf, off, len))
     }
 
@@ -1137,10 +1152,10 @@ trait Printers extends api.Printers { self: SymbolTable =>
   private class Footnotes {
     import scala.collection.mutable.{Map, WeakHashMap, SortedSet}
 
-    private val index = Map[Class[_], WeakHashMap[Any, Int]]()
+    private[this] val index = Map[Class[_], WeakHashMap[Any, Int]]()
     private def classIndex[T: ClassTag] = index.getOrElseUpdate(classTag[T].runtimeClass, WeakHashMap[Any, Int]())
 
-    private val counters = Map[Class[_], Int]()
+    private[this] val counters = Map[Class[_], Int]()
     private def nextCounter[T: ClassTag] = {
       val clazz = classTag[T].runtimeClass
       counters.getOrElseUpdate(clazz, 0)
@@ -1148,7 +1163,7 @@ trait Printers extends api.Printers { self: SymbolTable =>
       counters(clazz)
     }
 
-    private val footnotes = Map[Class[_], SortedSet[Int]]()
+    private[this] val footnotes = Map[Class[_], SortedSet[Int]]()
     private def classFootnotes[T: ClassTag] = footnotes.getOrElseUpdate(classTag[T].runtimeClass, SortedSet[Int]())
 
     def put[T: ClassTag](any: T): Int = {
@@ -1175,10 +1190,10 @@ trait Printers extends api.Printers { self: SymbolTable =>
 
   // emits more or less verbatim representation of the provided tree
   class RawTreePrinter(out: PrintWriter) extends super.TreePrinter {
-    private var depth = 0
-    private var printTypesInFootnotes = true
-    private var printingFootnotes = false
-    private val footnotes = new Footnotes()
+    private[this] var depth = 0
+    private[this] var printTypesInFootnotes = true
+    private[this] var printingFootnotes = false
+    private[this] val footnotes = new Footnotes()
 
     def print(args: Any*): Unit = {
       // don't print type footnotes if the argument is a mere type

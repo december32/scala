@@ -45,7 +45,7 @@ class which is not a trait. It is possible to write a list of
 parents that starts with a trait reference, e.g.
 `$mt_1$ with $\ldots$ with $mt_n$`. In that case the list
 of parents is implicitly extended to include the supertype of $mt_1$
-as first parent type. The new supertype must have at least one
+as the first parent type. The new supertype must have at least one
 constructor that does not take parameters.  In the following, we will
 always assume that this implicit extension has been performed, so that
 the first parent class of a template is a regular superclass
@@ -63,14 +63,15 @@ The _least proper supertype_ of a template is the class type or
 class types.
 
 The statement sequence $\mathit{stats}$ contains member definitions that
-define new members or overwrite members in the parent classes.  If the
-template forms part of an abstract class or trait definition, the
-statement part $\mathit{stats}$ may also contain declarations of abstract
-members. If the template forms part of a concrete class definition,
+define new members or override members in the parent classes.  If the
+template forms part of an abstract class or trait definition, then
+$\mathit{stats}$ may also contain declarations of abstract members.
+If the template forms part of a concrete class definition,
 $\mathit{stats}$ may still contain declarations of abstract type members, but
 not of abstract term members.  Furthermore, $\mathit{stats}$ may in any case
-also contain expressions; these are executed in the order they are
-given as part of the initialization of a template.
+also contain strictly evaluated expressions: these are executed in the order they are
+given as part of the initialization of a template, even if they appear in
+the definition of overridden members.
 
 The sequence of template statements may be prefixed with a formal
 parameter definition and an arrow, e.g. `$x$ =>`, or
@@ -109,10 +110,13 @@ object O extends Base with Mixin {}
 
 <!-- TODO: Make all references to Java generic -->
 
-**Inheriting from Java Types** A template may have a Java class as its superclass and Java interfaces as its
-mixins.
+**Inheriting from Java Types**
 
-**Template Evaluation** Consider a template `$sc$ with $mt_1$ with $mt_n$ { $\mathit{stats}$ }`.
+A template may have a Java class as its superclass and Java interfaces as its mixins.
+
+**Template Evaluation**
+
+Consider a template `$sc$ with $mt_1$ with $mt_n$ { $\mathit{stats}$ }`.
 
 If this is the template of a [trait](#traits) then its _mixin-evaluation_
 consists of an evaluation of the statement sequence $\mathit{stats}$.
@@ -126,20 +130,21 @@ consists of the following steps.
   up to the template's superclass denoted by $sc$ are
   mixin-evaluated. Mixin-evaluation happens in reverse order of
   occurrence in the linearization.
-- Finally the statement sequence $\mathit{stats}\,$ is evaluated.
+- Finally, the statement sequence $\mathit{stats}\,$ is evaluated.
 
 ###### Delayed Initialization
-The initialization code of an object or class (but not a trait) that follows
-the superclass
-constructor invocation and the mixin-evaluation of the template's base
-classes is passed to a special hook, which is inaccessible from user
-code. Normally, that hook simply executes the code that is passed to
-it. But templates inheriting the `scala.DelayedInit` trait
-can override the hook by re-implementing the `delayedInit`
-method, which is defined as follows:
+This statement sequence constitutes the initialization code for an object
+or class after the superclass constructor invocation and the mixin-evaluation
+of the template's base classes as described above.
+Normally, this code is passed to a special hook, inaccessible to user code,
+which simply executes it.
+
+However, in objects and classes (but not traits) which extend `scala.DelayedInit`,
+the initialization code is passed to a `delayedInit` method which can be
+overridden to implement arbitrary semantics.
 
 ```scala
-def delayedInit(body: => Unit)
+def delayedInit(body: => Unit): Unit
 ```
 
 ### Constructor Invocations
@@ -434,19 +439,20 @@ An early definition is type-checked and evaluated in the scope which
 is in effect just before the template being defined, augmented by any
 type parameters of the enclosing class and by any early definitions
 preceding the one being defined. In particular, any reference to
-`this` in the right-hand side of an early definition refers
+`this` in an early definition refers
 to the identity of `this` just outside the template. Consequently, it
-is impossible that an early definition refers to the object being
-constructed by the template, or refers to one of its fields and
+is impossible for an early definition to refer to the object being
+constructed by the template, or to refer to one of its fields and
 methods, except for any other preceding early definition in the same
 section. Furthermore, references to preceding early definitions
-always refer to the value that's defined there, and do not take into account
+always refer to the value that's defined there and do not take into account
 overriding definitions. In other words, a block of early definitions
-is evaluated exactly as if it was a local bock containing a number of value
+is evaluated exactly as if it were a local block containing a number of value
 definitions.
 
-Early definitions are evaluated in the order they are being defined
-before the superclass constructor of the template is called.
+Early definitions are evaluated
+before the superclass constructor of the template is called,
+in the order they are defined.
 
 ###### Example
 Early definitions are particularly useful for
@@ -823,16 +829,15 @@ Consider the class definition
 
 ```scala
 class LinkedList[A]() {
-  var head = _
-  var tail = null
-  def isEmpty = tail != null
+  var head: A = _
+  var tail: LinkedList[A] = null
   def this(head: A) = { this(); this.head = head }
-  def this(head: A, tail: List[A]) = { this(head); this.tail = tail }
+  def this(head: A, tail: LinkedList[A]) = { this(head); this.tail = tail }
 }
 ```
 
 This defines a class `LinkedList` with three constructors.  The
-second constructor constructs an singleton list, while the
+second constructor constructs a singleton list, while the
 third one constructs a list with a given head and tail.
 
 ### Case Classes
@@ -1017,7 +1022,7 @@ is undefined for the given key. This class is implemented as follows.
 ```scala
 abstract class Table[A, B](defaultValue: B) {
   def get(key: A): Option[B]
-  def set(key: A, value: B)
+  def set(key: A, value: B): Unit
   def apply(key: A) = get(key) match {
     case Some(value) => value
     case None => defaultValue
@@ -1029,8 +1034,8 @@ Here is a concrete implementation of the `Table` class.
 
 ```scala
 class ListTable[A, B](defaultValue: B) extends Table[A, B](defaultValue) {
-  private var elems: List[(A, B)]
-  def get(key: A) = elems.find(._1.==(key)).map(._2)
+  private var elems: List[(A, B)] = Nil
+  def get(key: A) = elems.find(_._1 == key).map(_._2)
   def set(key: A, value: B) = { elems = (key, value) :: elems }
 }
 ```
@@ -1042,7 +1047,7 @@ Here is a trait that prevents concurrent access to the
 trait SynchronizedTable[A, B] extends Table[A, B] {
   abstract override def get(key: A): B =
     synchronized { super.get(key) }
-  abstract override def set((key: A, value: B) =
+  abstract override def set(key: A, value: B) =
     synchronized { super.set(key, value) }
 }
 ```
@@ -1060,7 +1065,7 @@ table with strings as keys and integers as values and with a default
 value `0`:
 
 ```scala
-object MyTable extends ListTable[String, Int](0) with SynchronizedTable
+object MyTable extends ListTable[String, Int](0) with SynchronizedTable[String, Int]
 ```
 
 The object `MyTable` inherits its `get` and `set`

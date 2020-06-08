@@ -1,16 +1,25 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.collection.mutable
 
 import scala.annotation.migration
-import scala.collection.{IterableOnce, SeqFactory, StrictOptimizedSeqFactory, StrictOptimizedSeqOps}
+import scala.collection.generic.DefaultSerializable
+import scala.collection.{IterableFactoryDefaults, IterableOnce, SeqFactory, StrictOptimizedSeqFactory, StrictOptimizedSeqOps}
 
 /** A stack implements a data structure which allows to store and retrieve
   *  objects in a last-in-first-out (LIFO) fashion.
   *
   *  @tparam A    type of the elements contained in this stack.
-  *
-  *  @author  Pathikrit Bhowmick
-  *  @version 2.13
-  *  @since   2.13
   *
   *  @define Coll `Stack`
   *  @define coll stack
@@ -24,12 +33,17 @@ class Stack[A] protected (array: Array[AnyRef], start: Int, end: Int)
   extends ArrayDeque[A](array, start, end)
     with IndexedSeqOps[A, Stack, Stack[A]]
     with StrictOptimizedSeqOps[A, Stack, Stack[A]]
-    with Cloneable[Stack[A]] {
+    with IterableFactoryDefaults[A, Stack]
+    with ArrayDequeOps[A, Stack, Stack[A]]
+    with Cloneable[Stack[A]]
+    with DefaultSerializable {
 
   def this(initialSize: Int = ArrayDeque.DefaultInitialSize) =
     this(ArrayDeque.alloc(initialSize), start = 0, end = 0)
 
   override def iterableFactory: SeqFactory[Stack] = Stack
+
+  override protected[this] def stringPrefix = "Stack"
 
   /**
     * Add elements to the top of this stack
@@ -67,7 +81,7 @@ class Stack[A] protected (array: Array[AnyRef], start: Int, end: Int)
     * Removes the top element from this stack and return it
     *
     * @return
-    * @throws java.util.NoSuchElementException when stack is empty
+    * @throws NoSuchElementException when stack is empty
     */
   def pop(): A = removeHead()
 
@@ -90,12 +104,12 @@ class Stack[A] protected (array: Array[AnyRef], start: Int, end: Int)
     *  the element from the stack. An error is signaled if there is no
     *  element on the stack.
     *
-    *  @throws java.util.NoSuchElementException
+    *  @throws NoSuchElementException
     *  @return the top element
     */
   @`inline` final def top: A = head
 
-  override def clone(): Stack[A] = {
+  protected override def klone(): Stack[A] = {
     val bf = newSpecificBuilder
     bf ++= this
     bf.result()
@@ -111,6 +125,7 @@ class Stack[A] protected (array: Array[AnyRef], start: Int, end: Int)
   * @define coll stack
   * @define Coll `Stack`
   */
+@SerialVersionUID(3L)
 object Stack extends StrictOptimizedSeqFactory[Stack] {
 
   def from[A](source: IterableOnce[A]): Stack[A] = empty ++= source

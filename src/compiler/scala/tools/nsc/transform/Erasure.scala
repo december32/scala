@@ -1,11 +1,19 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc
 package transform
 
+import scala.annotation.tailrec
 import scala.reflect.internal.ClassfileConstants._
 import scala.collection.{ mutable, immutable }
 import symtab._
@@ -39,39 +47,56 @@ abstract class Erasure extends InfoTransform
     val mname      = newTermName("to" + numericSym.name)
     val conversion = tree.tpe member mname
 
-    assert(conversion != NoSymbol, tree + " => " + numericSym)
+    assert(conversion != NoSymbol, s"$tree => $numericSym")
     atPos(tree.pos)(Apply(Select(tree, conversion), Nil))
   }
 
-  private object NeedsSigCollector extends TypeCollector(false) {
-    def traverse(tp: Type): Unit = {
+  private object NeedsSigCollector {
+    private val NeedsSigCollector_true = new NeedsSigCollector(true)
+    private val NeedsSigCollector_false = new NeedsSigCollector(false)
+    def apply(isClassConstructor: Boolean) = if (isClassConstructor) NeedsSigCollector_true else NeedsSigCollector_false
+  }
+  private class NeedsSigCollector(isClassConstructor: Boolean) extends TypeCollector(false) {
+    def apply(tp: Type): Unit =
       if (!result) {
         tp match {
           case st: SubType =>
-            traverse(st.supertype)
+            apply(st.supertype)
           case TypeRef(pre, sym, args) =>
-            if (sym == ArrayClass) args foreach traverse
+            if (sym == ArrayClass) untilApply(args)
             else if (sym.isTypeParameterOrSkolem || sym.isExistentiallyBound || !args.isEmpty) result = true
-            else if (sym.isClass) traverse(rebindInnerClass(pre, sym)) // #2585
-            else if (!sym.isTopLevel) traverse(pre)
-          case PolyType(_, _) | ExistentialType(_, _) =>
-            result = true
+            else if (sym.isClass) apply(rebindInnerClass(pre, sym)) // #2585
+            else if (!sym.isTopLevel) apply(pre)
+          case PolyType(_, _) | ExistentialType(_, _) => result = true
           case RefinedType(parents, _) =>
-            parents foreach traverse
+            untilApply(parents)
           case ClassInfoType(parents, _, _) =>
-            parents foreach traverse
+            untilApply(parents)
           case AnnotatedType(_, atp) =>
-            traverse(atp)
+            apply(atp)
+          case MethodType(params, resultType) =>
+            if (isClassConstructor) {
+              val sigParams = params match {
+                case head :: tail if head.isOuterParam => tail
+                case _ => params
+              }
+              this.foldOver(sigParams)
+              // skip the result type, it is Void in the signature.
+            } else {
+              tp.foldOver(this)
+            }
           case _ =>
-            mapOver(tp)
+            tp.foldOver(this)
         }
       }
-    }
+    @tailrec
+    private[this] def untilApply(ts: List[Type]): Unit =
+      if (! ts.isEmpty && ! result) { apply(ts.head) ; untilApply(ts.tail) }
   }
 
   override protected def verifyJavaErasure = settings.Xverify || settings.debug
-  private def needsJavaSig(tp: Type, throwsArgs: List[Type]) = !settings.Ynogenericsig && {
-    def needs(tp: Type) = NeedsSigCollector.collect(tp)
+  private def needsJavaSig(sym: Symbol, tp: Type, throwsArgs: List[Type]) = !settings.Ynogenericsig && {
+    def needs(tp: Type) = NeedsSigCollector(sym.isClassConstructor).collect(tp)
     needs(tp) || throwsArgs.exists(needs)
   }
 
@@ -82,8 +107,8 @@ abstract class Erasure extends InfoTransform
   private def isTypeParameterInSig(sym: Symbol, initialSymbol: Symbol) = (
     !sym.isHigherOrderTypeParameter &&
     sym.isTypeParameterOrSkolem && (
-      (initialSymbol.enclClassChain.exists(sym isNestedIn _)) ||
-      (initialSymbol.isMethod && initialSymbol.typeParams.contains(sym))
+      (initialSymbol.isMethod && initialSymbol.typeParams.contains(sym)) ||
+      (initialSymbol.ownersIterator.exists(encl => encl.isClass && !encl.hasPackageFlag && sym.isNestedIn(encl)))
     )
   )
 
@@ -216,9 +241,9 @@ abstract class Erasure extends InfoTransform
       val ps = ensureClassAsFirstParent(validParents)
       ps.foreach(boxedSig)
     }
-    def boxedSig(tp: Type): Unit = jsig(tp, primitiveOK = false)
+    def boxedSig(tp: Type): Unit = jsig(tp, unboxedVCs = false)
     def boundsSig(bounds: List[Type]): Unit = {
-      val (isTrait, isClass) = bounds partition (_.typeSymbol.isTrait)
+      val (isTrait, isClass) = partitionConserve(bounds)(_.typeSymbol.isTrait)
       isClass match {
         case Nil    => builder.append(':') // + boxedSig(ObjectTpe)
         case x :: _ => builder.append(':'); boxedSig(x)
@@ -246,13 +271,14 @@ abstract class Erasure extends InfoTransform
     def fullNameInSig(sym: Symbol): Unit = builder.append('L').append(enteringJVM(sym.javaBinaryNameString))
 
     @noinline
-    def jsig(tp0: Type, existentiallyBound: List[Symbol] = Nil, toplevel: Boolean = false, primitiveOK: Boolean = true): Unit = {
+    def jsig(tp0: Type, existentiallyBound: List[Symbol] = Nil, toplevel: Boolean = false, unboxedVCs: Boolean = true): Unit = {
+      @inline def jsig1(tp0: Type) = jsig(tp0, existentiallyBound = Nil, toplevel = false, unboxedVCs = true)
       val tp = tp0.dealias
       tp match {
         case st: SubType =>
-          jsig(st.supertype, existentiallyBound, toplevel, primitiveOK)
+          jsig(st.supertype, existentiallyBound, toplevel, unboxedVCs)
         case ExistentialType(tparams, tpe) =>
-          jsig(tpe, tparams, toplevel, primitiveOK)
+          jsig(tpe, tparams, toplevel, unboxedVCs)
         case TypeRef(pre, sym, args) =>
           def argSig(tp: Type): Unit =
             if (existentiallyBound contains tp.typeSymbol) {
@@ -272,12 +298,12 @@ abstract class Erasure extends InfoTransform
               case _ =>
                 boxedSig(tp)
             }
-          def classSig: Unit = {
+          def classSig(): Unit = {
             markClassUsed(sym)
             val preRebound = pre.baseType(sym.owner) // #2585
-            if (needsJavaSig(preRebound, Nil)) {
+            if (needsJavaSig(sym, preRebound, Nil)) {
               val i = builder.length()
-              jsig(preRebound, existentiallyBound)
+              jsig(preRebound, existentiallyBound, toplevel = false, unboxedVCs = true)
               if (builder.charAt(i) == 'L') {
                 builder.delete(builder.length() - 1, builder.length())// delete ';'
                 // If the prefix is a module, drop the '$'. Classes (or modules) nested in modules
@@ -306,10 +332,10 @@ abstract class Erasure extends InfoTransform
 
           // If args isEmpty, Array is being used as a type constructor
           if (sym == ArrayClass && args.nonEmpty) {
-            if (unboundedGenericArrayLevel(tp) == 1) jsig(ObjectTpe)
+            if (unboundedGenericArrayLevel(tp) == 1) jsig1(ObjectTpe)
             else {
               builder.append(ARRAY_TAG)
-              args.foreach(jsig(_))
+              args.foreach(jsig1(_))
             }
           }
           else if (isTypeParameterInSig(sym, sym0)) {
@@ -317,72 +343,70 @@ abstract class Erasure extends InfoTransform
             builder.append(TVAR_TAG).append(sym.name).append(';')
           }
           else if (sym == AnyClass || sym == AnyValClass || sym == SingletonClass)
-            jsig(ObjectTpe)
+            jsig1(ObjectTpe)
           else if (sym == UnitClass)
-            jsig(BoxedUnitTpe)
+            jsig1(BoxedUnitTpe)
           else if (sym == NothingClass)
-            jsig(RuntimeNothingClass.tpe)
+            jsig1(RuntimeNothingClass.tpe)
           else if (sym == NullClass)
-            jsig(RuntimeNullClass.tpe)
+            jsig1(RuntimeNullClass.tpe)
           else if (isPrimitiveValueClass(sym)) {
-            if (!primitiveOK) jsig(ObjectTpe)
-            else if (sym == UnitClass) jsig(BoxedUnitTpe)
+            if (!unboxedVCs) jsig1(ObjectTpe)
+            else if (sym == UnitClass) jsig1(BoxedUnitTpe)
             else builder.append(abbrvTag(sym))
           }
           else if (sym.isDerivedValueClass) {
-            val unboxed     = sym.derivedValueClassUnbox.tpe_*.finalResultType
-            val unboxedSeen = (tp memberType sym.derivedValueClassUnbox).finalResultType
-            def unboxedMsg  = if (unboxed == unboxedSeen) "" else s", seen within ${sym.simpleName} as $unboxedSeen"
-            logResult(s"Erasure of value class $sym (underlying type $unboxed$unboxedMsg) is") {
-              if (isPrimitiveValueType(unboxedSeen) && !primitiveOK)
-                classSig
-              else
-                jsig(unboxedSeen, existentiallyBound, toplevel, primitiveOK)
-            }
+            if (unboxedVCs) {
+              val unboxedSeen = (tp memberType sym.derivedValueClassUnbox).finalResultType
+              jsig(unboxedSeen, existentiallyBound, toplevel, unboxedVCs = true)
+            } else classSig
           }
           else if (sym.isClass)
             classSig
           else
-            jsig(erasure(sym0)(tp), existentiallyBound, toplevel, primitiveOK)
+            jsig(erasure(sym0)(tp), existentiallyBound, toplevel, unboxedVCs)
         case PolyType(tparams, restpe) =>
-          assert(tparams.nonEmpty)
+          assert(tparams.nonEmpty, tparams)
           if (toplevel) polyParamSig(tparams)
-          jsig(restpe)
+          jsig1(restpe)
 
         case MethodType(params, restpe) =>
           builder.append('(')
           params foreach (p => {
-            val tp = p.attachments.get[TypeParamVarargsAttachment] match {
-              case Some(att) =>
-                // For @varargs forwarders, a T* parameter has type Array[Object] in the forwarder
-                // instead of Array[T], as the latter would erase to Object (instead of Array[Object]).
-                // To make the generic signature correct ("[T", not "[Object"), an attachment on the
-                // parameter symbol stores the type T that was replaced by Object.
-                builder.append('['); att.typeParamRef
-              case _         => p.tpe
+            val isClassOuterParam = sym0.isClassConstructor && p.isOuterParam
+            if (!isClassOuterParam) {
+              val tp = p.attachments.get[TypeParamVarargsAttachment] match {
+                case Some(att) =>
+                  // For @varargs forwarders, a T* parameter has type Array[Object] in the forwarder
+                  // instead of Array[T], as the latter would erase to Object (instead of Array[Object]).
+                  // To make the generic signature correct ("[T", not "[Object"), an attachment on the
+                  // parameter symbol stores the type T that was replaced by Object.
+                  builder.append('['); att.typeParamRef
+                case _ => p.tpe
+              }
+              jsig1(tp)
             }
-            jsig(tp)
           })
           builder.append(')')
-          if (restpe.typeSymbol == UnitClass || sym0.isConstructor) builder.append(VOID_TAG) else jsig(restpe)
+          if (restpe.typeSymbol == UnitClass || sym0.isConstructor) builder.append(VOID_TAG) else jsig1(restpe)
 
         case RefinedType(parents, decls) =>
-          jsig(intersectionDominator(parents), primitiveOK = primitiveOK)
+          jsig(intersectionDominator(parents), existentiallyBound = Nil, toplevel = false, unboxedVCs = unboxedVCs)
         case ClassInfoType(parents, _, _) =>
           superSig(tp.typeSymbol, parents)
         case AnnotatedType(_, atp) =>
-          jsig(atp, existentiallyBound, toplevel, primitiveOK)
+          jsig(atp, existentiallyBound, toplevel, unboxedVCs)
         case BoundedWildcardType(bounds) =>
           println("something's wrong: "+sym0+":"+sym0.tpe+" has a bounded wildcard type")
-          jsig(bounds.hi, existentiallyBound, toplevel, primitiveOK)
+          jsig(bounds.hi, existentiallyBound, toplevel, unboxedVCs)
         case _ =>
           val etp = erasure(sym0)(tp)
           if (etp eq tp) throw new UnknownSig
-          else jsig(etp)
+          else jsig1(etp)
       }
     }
     val throwsArgs = sym0.annotations flatMap ThrownException.unapply
-    if (needsJavaSig(info, throwsArgs)) {
+    if (needsJavaSig(sym0, info, throwsArgs)) {
       try {
         jsig(info, toplevel = true)
         throwsArgs.foreach { t =>
@@ -453,26 +477,16 @@ abstract class Erasure extends InfoTransform
   override def newTyper(context: Context) = new Eraser(context)
 
   class EnterBridges(unit: CompilationUnit, root: Symbol) {
-
-    class BridgesCursor(root: Symbol) extends overridingPairs.Cursor(root) {
-      override def parents              = root.info.firstParent :: Nil
-      // Varargs bridges may need generic bridges due to the non-repeated part of the signature of the involved methods.
-      // The vararg bridge is generated during refchecks (probably to simplify override checking),
-      // but then the resulting varargs "bridge" method may itself need an actual erasure bridge.
-      // TODO: like javac, generate just one bridge method that wraps Seq <-> varargs and does erasure-induced casts
-      override def exclude(sym: Symbol) = !sym.isMethod || super.exclude(sym)
-    }
-
     val site         = root.thisType
     val bridgesScope = newScope
     val bridgeTarget = mutable.HashMap[Symbol, Symbol]()
 
-    val opc = enteringExplicitOuter { new BridgesCursor(root) }
+    val opc = enteringExplicitOuter { new overridingPairs.BridgesCursor(root) }
 
     def computeAndEnter(): Unit = {
       while (opc.hasNext) {
         if (enteringExplicitOuter(!opc.low.isDeferred))
-          checkPair(opc. currentPair)
+          checkPair(opc.currentPair)
 
         opc.next()
       }
@@ -556,10 +570,10 @@ abstract class Erasure extends InfoTransform
       if (member.isModule) newFlags = (newFlags | METHOD) & ~(MODULE | STABLE)
       val bridge = other.cloneSymbolImpl(root, newFlags).setPos(root.pos).setAnnotations(member.annotations)
 
-      debuglog("generating bridge from %s (%s): %s to %s: %s".format(
+      debuglog("generating bridge from %s (%s): %s%s to %s: %s%s".format(
         other, flagsToString(newFlags),
-        otpe + other.locationString, member,
-        specialErasure(root)(member.tpe) + member.locationString)
+        otpe, other.locationString, member,
+        specialErasure(root)(member.tpe), member.locationString)
       )
 
       // the parameter symbols need to have the new owner
@@ -682,7 +696,7 @@ abstract class Erasure extends InfoTransform
             else {
               val untyped =
 //                util.trace("new asinstanceof test") {
-                  gen.evalOnce(qual1, context.owner, context.unit) { qual =>
+                  gen.evalOnce(qual1, context.owner, fresh) { qual =>
                     If(Apply(Select(qual(), nme.eq), List(Literal(Constant(null)) setType NullTpe)),
                        Literal(Constant(null)) setType targ.tpe,
                        unbox(qual(), targ.tpe))
@@ -825,8 +839,9 @@ abstract class Erasure extends InfoTransform
         case Ident(_) | Select(_, _) =>
           if (tree1.symbol.isOverloaded) {
             val first = tree1.symbol.alternatives.head
+            val firstTpe = first.tpe
             val sym1 = tree1.symbol.filter {
-              alt => alt == first || !(first.tpe looselyMatches alt.tpe)
+              alt => alt == first || !(firstTpe looselyMatches alt.tpe)
             }
             if (tree.symbol ne sym1) {
               tree1 setSymbol sym1 setType sym1.tpe
@@ -1043,8 +1058,8 @@ abstract class Erasure extends InfoTransform
               targ.tpe match {
                 case SingletonInstanceCheck(cmpOp, cmpArg) =>
                   atPos(tree.pos) { Apply(Select(cmpArg, cmpOp), List(qual)) }
-                case RefinedType(parents, decls) if (parents.length >= 2) =>
-                  gen.evalOnce(qual, currentOwner, unit) { q =>
+                case RefinedType(parents, decls) if (parents.lengthIs >= 2) =>
+                  gen.evalOnce(qual, currentOwner, localTyper.fresh) { q =>
                     // Optimization: don't generate isInstanceOf tests if the static type
                     // conforms, because it always succeeds.  (Or at least it had better.)
                     // At this writing the pattern matcher generates some instance tests
@@ -1097,7 +1112,7 @@ abstract class Erasure extends InfoTransform
 
             global.typer.typedPos(tree.pos) {
               if (level == 1) isArrayTest(qual)
-              else gen.evalOnce(qual, currentOwner, unit) { qual1 =>
+              else gen.evalOnce(qual, currentOwner, localTyper.fresh) { qual1 =>
                 gen.mkAnd(
                   gen.mkMethodCall(
                     qual1(),
@@ -1241,7 +1256,7 @@ abstract class Erasure extends InfoTransform
           // class if `m` is defined in Java. This avoids the need for having the Java class as
           // a direct parent (scala-dev#143).
           if (qual.isInstanceOf[Super]) {
-            val qualSym = accessibleOwnerOrParentDefiningMember(sym, qual.tpe.typeSymbol.parentSymbols, context) match {
+            val qualSym = accessibleOwnerOrParentDefiningMember(sym, qual.tpe.typeSymbol.parentSymbolsIterator, context) match {
               case Some(p) => p
               case None =>
                 // There is no test for this warning, I have been unable to come up with an example that would trigger it.
@@ -1271,7 +1286,7 @@ abstract class Erasure extends InfoTransform
           treeCopy.Template(tree, parents, noSelfType, addBridgesToTemplate(body, currentOwner))
 
         case Match(selector, cases) =>
-          Match(Typed(selector, TypeTree(selector.tpe)), cases)
+          treeCopy.Match(tree, Typed(selector, TypeTree(selector.tpe)), cases)
 
         case Literal(ct) =>
           // We remove the original tree attachments in pre-erasure to free up memory
@@ -1282,11 +1297,7 @@ abstract class Erasure extends InfoTransform
             val erased = erasure(typeValue.typeSymbol) applyInArray typeValue
 
             treeCopy.Literal(cleanLiteral, Constant(erased))
-          } else if (ct.isSymbol)
-            atPos(tree.pos) {
-              gen.mkMethodCall(definitions.Symbol_apply, List(Literal(Constant(ct.scalaSymbolValue.name))))
-            }
-          else cleanLiteral
+          } else cleanLiteral
 
         case ClassDef(_,_,_,_) =>
           debuglog("defs of " + tree.symbol + " = " + tree.symbol.info.decls)
@@ -1437,7 +1448,7 @@ abstract class Erasure extends InfoTransform
    * - For Java-defined members we prefer a direct parent over of the owner, even if the owner is
    *   accessible. This way the owner doesn't need to be added as a direct parent, see scala-dev#143.
    */
-  final def accessibleOwnerOrParentDefiningMember(member: Symbol, parents: List[Symbol], context: Context): Option[Symbol] = {
+  final def accessibleOwnerOrParentDefiningMember(member: Symbol, parents: Iterator[Symbol], context: Context): Option[Symbol] = {
     def eraseAny(cls: Symbol) = if (cls == AnyClass || cls == AnyValClass) ObjectClass else cls
 
     if (member.isConstructor || !member.isJavaDefined) Some(eraseAny(member.owner))

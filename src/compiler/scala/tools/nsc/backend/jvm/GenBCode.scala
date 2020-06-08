@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2012 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc
@@ -62,8 +69,6 @@ abstract class GenBCode extends SubComponent {
   class BCodePhase(prev: Phase) extends StdPhase(prev) {
     override def description = "Generate bytecode from ASTs using the ASM library"
 
-    override val erasedTypes = true
-
     def apply(unit: CompilationUnit): Unit = codeGen.genUnit(unit)
 
     override def run(): Unit = {
@@ -72,6 +77,7 @@ abstract class GenBCode extends SubComponent {
           initialize()
           super.run() // invokes `apply` for each compilation unit
           generatedClassHandler.complete()
+          writeOtherFiles()
         } finally {
           this.close()
         }
@@ -89,10 +95,17 @@ abstract class GenBCode extends SubComponent {
       generatedClassHandler = GeneratedClassHandler(global)
       statistics.stopTimer(statistics.bcodeInitTimer, initStart)
     }
+    def writeOtherFiles(): Unit = {
+      global.plugins foreach {
+        plugin =>
+          plugin.writeAdditionalOutputs(postProcessor.classfileWriter)
+      }
+    }
 
     private def close(): Unit = {
       postProcessor.classfileWriter.close()
       generatedClassHandler.close()
+      bTypes.BTypeExporter.close()
     }
   }
 }

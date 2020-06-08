@@ -1,12 +1,21 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
 package reflect
 package internal
 package pickling
+
+import scala.annotation.tailrec
 
 /** Variable length byte arrays, with methods for basic pickling and unpickling.
  *
@@ -20,21 +29,26 @@ class PickleBuffer(data: Array[Byte], from: Int, to: Int) {
   var readIndex = from
   var writeIndex = to
 
-  /** Double bytes array */
-  private def dble() {
-    val bytes1 = new Array[Byte](bytes.length * 2)
+  @inline
+  private def growTo(targetCapacity: Int): Unit = {
+    val bytes1 = new Array[Byte](targetCapacity)
     Array.copy(bytes, 0, bytes1, 0, writeIndex)
     bytes = bytes1
   }
 
   def ensureCapacity(capacity: Int) =
-    while (bytes.length < writeIndex + capacity) dble()
+    if (bytes.length < writeIndex + capacity) {
+      var newCapacity = bytes.length
+      while (newCapacity < writeIndex + capacity) newCapacity <<= 1
+      growTo(newCapacity)
+    }
 
   // -- Basic output routines --------------------------------------------
 
   /** Write a byte of data */
-  def writeByte(b: Int) {
-    if (writeIndex == bytes.length) dble()
+  def writeByte(b: Int): Unit = {
+    if (writeIndex == bytes.length)
+      growTo(bytes.length << 1)
     bytes(writeIndex) = b.toByte
     writeIndex += 1
   }
@@ -52,8 +66,8 @@ class PickleBuffer(data: Array[Byte], from: Int, to: Int) {
    * if the long value is in the range Int.MIN_VALUE to
    * Int.MAX_VALUE.
    */
-  def writeLongNat(x: Long) {
-    def writeNatPrefix(x: Long) {
+  def writeLongNat(x: Long): Unit = {
+    def writeNatPrefix(x: Long): Unit = {
       val y = x >>> 7
       if (y != 0L) writeNatPrefix(y)
       writeByte(((x & 0x7f) | 0x80).toInt)
@@ -66,8 +80,9 @@ class PickleBuffer(data: Array[Byte], from: Int, to: Int) {
   /** Write a natural number `x` at position `pos`.
    *  If number is more than one byte, shift rest of array to make space.
    */
-  def patchNat(pos: Int, x: Int) {
-    def patchNatPrefix(x: Int) {
+  def patchNat(pos: Int, x: Int): Unit = {
+    @tailrec
+    def patchNatPrefix(x: Int): Unit = {
       writeByte(0)
       Array.copy(bytes, pos, bytes, pos+1, writeIndex - (pos+1))
       bytes(pos) = ((x & 0x7f) | 0x80).toByte
@@ -83,7 +98,7 @@ class PickleBuffer(data: Array[Byte], from: Int, to: Int) {
    *
    *  @param x The long number to be written.
    */
-  def writeLong(x: Long) {
+  def writeLong(x: Long): Unit = {
     val y = x >> 8
     val z = x & 0xff
     if (-y != (z >> 7)) writeLong(y)
@@ -156,7 +171,7 @@ class PickleBuffer(data: Array[Byte], from: Int, to: Int) {
   /** Perform operation `op` the number of
    *  times specified.  Concatenate the results into a list.
    */
-  def times[T](n: Int, op: ()=>T): List[T] =
+  def times[T](n: Int, op: () => T): List[T] =
     if (n == 0) List() else op() :: times(n-1, op)
 
   /** Pickle = majorVersion_Nat minorVersion_Nat nbEntries_Nat {Entry}

@@ -1,20 +1,27 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.collection
 package mutable
 
-import scala.annotation.unchecked.uncheckedVariance
 import scala.annotation.tailrec
-import scala.Int._
 import scala.collection.immutable.{List, Nil, ::}
-import scala.annotation.tailrec
 import java.lang.{IllegalArgumentException, IndexOutOfBoundsException}
+import scala.collection.generic.DefaultSerializable
+import scala.runtime.Statics.releaseFence
 
 /** A `Buffer` implementation backed by a list. It provides constant time
   *  prepend and append. Most other operations are linear.
   *
-  *  @author  Matthias Zenger
-  *  @author  Martin Odersky
-  *  @version 2.8
-  *  @since   1
   *  @see [[http://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#list-buffers "Scala's Collection Library overview"]]
   *  section on `List Buffers` for more information.
   *
@@ -31,14 +38,16 @@ class ListBuffer[A]
   extends AbstractBuffer[A]
      with SeqOps[A, ListBuffer, ListBuffer[A]]
      with StrictOptimizedSeqOps[A, ListBuffer, ListBuffer[A]]
-     with ReusableBuilder[A, immutable.List[A]] {
+     with ReusableBuilder[A, immutable.List[A]]
+     with IterableFactoryDefaults[A, ListBuffer]
+     with DefaultSerializable {
 
   private var first: List[A] = Nil
   private var last0: ::[A] = null
-  private var aliased = false
-  private var len = 0
+  private[this] var aliased = false
+  private[this] var len = 0
 
-  private type Predecessor[A] = ::[A] /*| Null*/
+  private type Predecessor[A0] = ::[A0] /*| Null*/
 
   def iterator = first.iterator
 
@@ -64,6 +73,10 @@ class ListBuffer[A]
   // Avoids copying where possible.
   override def toList: List[A] = {
     aliased = nonEmpty
+    // We've accumulated a number of mutations to `List.tail` by this stage.
+    // Make sure they are visible to threads that the client of this ListBuffer might be about
+    // to share this List with.
+    releaseFence()
     first
   }
 
@@ -89,7 +102,7 @@ class ListBuffer[A]
     aliased = false
   }
 
-  def addOne(elem: A): this.type = {
+  final def addOne(elem: A): this.type = {
     ensureUnaliased()
     val last1 = new ::[A](elem, Nil)
     if (len == 0) first = last1 else last0.next = last1
@@ -98,7 +111,26 @@ class ListBuffer[A]
     this
   }
 
-  def subtractOne(elem: A): this.type = {
+  // Overridden for performance
+  override final def addAll(xs: IterableOnce[A]): this.type = {
+    val it = xs.iterator
+    if (it.hasNext) {
+      ensureUnaliased()
+      val last1 = new ::[A](it.next(), Nil)
+      if (len == 0) first = last1 else last0.next = last1
+      last0 = last1
+      len += 1
+      while (it.hasNext) {
+        val last1 = new ::[A](it.next(), Nil)
+        last0.next = last1
+        last0 = last1
+        len += 1
+      }
+    }
+    this
+  }
+
+  override def subtractOne(elem: A): this.type = {
     ensureUnaliased()
     if (isEmpty) {}
     else if (first.head == elem) {
@@ -146,30 +178,34 @@ class ListBuffer[A]
   private def getNext(p: Predecessor[A]): List[A] =
     if (p == null) first else p.next
 
-  private def setNext(p: Predecessor[A], nx: List[A]): Unit = {
-    if (p == null) first = nx else p.next = nx
-    if (nx.isEmpty) last0 = p
-    else {
-      var l = nx.asInstanceOf[::[A]]
-      while (l.next.nonEmpty) l = l.next.asInstanceOf[::[A]]
-      last0 = l
-    }
-  }
-
   def update(idx: Int, elem: A): Unit = {
     ensureUnaliased()
-    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(idx.toString)
-    val p = locate(idx)
-    setNext(p, elem :: getNext(p).tail)
+    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
+    if (idx == 0) {
+      val newElem = new :: (elem, first.tail)
+      if (last0 eq first) {
+        last0 = newElem
+      }
+      first = newElem
+    } else {
+      // `p` can not be `null` because the case where `idx == 0` is handled above
+      val p = locate(idx)
+      val newElem = new :: (elem, p.tail.tail)
+      if (last0 eq p.tail) {
+        last0 = newElem
+      }
+      p.asInstanceOf[::[A]].next = newElem
+    }
   }
 
   def insert(idx: Int, elem: A): Unit = {
     ensureUnaliased()
-    if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(idx.toString)
-    if (idx == len) +=(elem)
+    if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
+    if (idx == len) addOne(elem)
     else {
       val p = locate(idx)
-      setNext(p, elem :: getNext(p))
+      val nx = elem :: getNext(p)
+      if(p eq null) first = nx else p.next = nx
       len += 1
     }
   }
@@ -185,9 +221,10 @@ class ListBuffer[A]
     while (it.hasNext) {
       len += 1
       val next = (it.next() :: follow).asInstanceOf[::[A]]
-      setNext(prev, next)
+      if(prev eq null) first = next else prev.next = next
       prev = next
     }
+    if ((prev ne null) && prev.next.isEmpty) last0 = prev
     prev
   }
 
@@ -196,7 +233,7 @@ class ListBuffer[A]
     val it = elems.iterator
     if (it.hasNext) {
       ensureUnaliased()
-      if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(idx.toString)
+      if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
       if (idx == len) ++=(elems)
       else insertAfter(locate(idx), it)
     }
@@ -204,10 +241,16 @@ class ListBuffer[A]
 
   def remove(idx: Int): A = {
     ensureUnaliased()
-    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(idx.toString)
+    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
     val p = locate(idx)
     val nx = getNext(p)
-    setNext(p, nx.tail)
+    if(p eq null) {
+      first = nx.tail
+      if(first.isEmpty) last0 = null
+    } else {
+      if(last0 eq nx) last0 = p
+      p.next = nx.tail
+    }
     len -= 1
     nx.head
   }
@@ -215,7 +258,7 @@ class ListBuffer[A]
   def remove(idx: Int, count: Int): Unit =
     if (count > 0) {
       ensureUnaliased()
-      if (idx < 0 || idx + count > len) throw new IndexOutOfBoundsException(idx.toString)
+      if (idx < 0 || idx + count > len) throw new IndexOutOfBoundsException(s"$idx to ${idx + count} is out of bounds (min 0, max ${len-1})")
       removeAfter(locate(idx), count)
     } else if (count < 0) {
       throw new IllegalArgumentException("removing negative number of elements: " + count)
@@ -224,7 +267,9 @@ class ListBuffer[A]
   private def removeAfter(prev: Predecessor[A], n: Int) = {
     @tailrec def ahead(p: List[A], n: Int): List[A] =
       if (n == 0) p else ahead(p.tail, n - 1)
-    setNext(prev, ahead(getNext(prev), n))
+    val nx = ahead(getNext(prev), n)
+    if(prev eq null) first = nx else prev.next = nx
+    if(nx.isEmpty) last0 = prev
     len -= n
   }
 
@@ -238,16 +283,21 @@ class ListBuffer[A]
   }
 
   def flatMapInPlace(f: A => IterableOnce[A]): this.type = {
-    ensureUnaliased()
-    var prev: Predecessor[A] = null
-    var cur: List[A] = first
-    while (!cur.isEmpty) {
-      val follow = cur.tail
-      setNext(prev, follow)
-      len -= 1
-      prev = insertAfter(prev, f(cur.head).iterator)
-      cur = follow
+    var src = first
+    var dst: List[A] = null
+    last0 = null
+    len = 0
+    while(!src.isEmpty) {
+      val it = f(src.head).iterator
+      while(it.hasNext) {
+        val v = new ::(it.next(), Nil)
+        if(dst eq null) dst = v else last0.next = v
+        last0 = v
+        len += 1
+      }
+      src = src.tail
     }
+    first = if(dst eq null) Nil else dst
     this
   }
 
@@ -258,17 +308,19 @@ class ListBuffer[A]
     while (!cur.isEmpty) {
       val follow = cur.tail
       if (!p(cur.head)) {
-        setNext(prev, follow)
+        if(prev eq null) first = follow
+        else prev.next = follow
         len -= 1
       } else {
         prev = cur.asInstanceOf[Predecessor[A]]
       }
       cur = follow
     }
+    last0 = prev
     this
   }
 
-  def patchInPlace(from: Int, patch: collection.Seq[A], replaced: Int): this.type = {
+  def patchInPlace(from: Int, patch: collection.IterableOnce[A], replaced: Int): this.type = {
     val i = math.min(math.max(from, 0), length)
     val n = math.min(math.max(replaced, 0), length)
     ensureUnaliased()
@@ -278,10 +330,30 @@ class ListBuffer[A]
     this
   }
 
-  override def className = "ListBuffer"
+  /**
+   * Selects the last element.
+   *
+   * Runs in constant time.
+   *
+   * @return The last element of this $coll.
+   * @throws NoSuchElementException If the $coll is empty.
+   */
+  override def last: A = if (last0 eq null) throw new NoSuchElementException("last of empty ListBuffer") else last0.head
+
+  /**
+   * Optionally selects the last element.
+   *
+   * Runs in constant time.
+   *
+   * @return the last element of this $coll$ if it is nonempty, `None` if it is empty.
+   */
+  override def lastOption: Option[A] = if (last0 eq null) None else Some(last0.head)
+
+  override protected[this] def stringPrefix = "ListBuffer"
 
 }
 
+@SerialVersionUID(3L)
 object ListBuffer extends StrictOptimizedSeqFactory[ListBuffer] {
 
   def from[A](coll: collection.IterableOnce[A]): ListBuffer[A] = new ListBuffer[A] ++= coll

@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2007-2013 LAMP/EPFL
- * @author  David Bernard, Manohar Jonnalagedda
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
@@ -13,9 +20,10 @@ import base._
 import base.comment._
 import model._
 import scala.reflect.internal.Reporter
-import scala.collection._
+import scala.collection.{immutable, _}
 import java.io.Writer
 import java.net.URI
+
 import javax.xml.stream.XMLOutputFactory
 
 /** An html page that is part of a Scaladoc site.
@@ -96,6 +104,7 @@ abstract class HtmlPage extends Page { thisPage =>
     case OrderedList(items, listStyle) => Ol(`class`= listStyle, elems= listItemsToHtml(items))
     case DefinitionList(items)         => Dl(items.toList flatMap { case (t, d) => Dt(inlineToHtml(t)) :: Dd(blockToHtml(d)) :: NoElems })
     case HorizontalRule()              => Hr
+    case tbl: comment.Table                    => tableToHtml(tbl)
   }) :: NoElems
 
   def listItemsToHtml(items: Seq[Block]) =
@@ -142,6 +151,32 @@ abstract class HtmlPage extends Page { thisPage =>
       inlineToHtml(text)
   }
 
+  private def tableToHtml(table: comment.Table): Elem = {
+
+    val comment.Table(header, columnOptions, rows) = table
+
+    val colClass = Map(
+      ColumnOption.ColumnOptionLeft -> "doctbl-left",
+      ColumnOption.ColumnOptionCenter -> "doctbl-center",
+      ColumnOption.ColumnOptionRight -> "doctbl-right"
+    )
+    val cc = columnOptions.map(colClass)
+    Table(
+      thead = THead(
+        Tr(
+          (header.cells zip cc).toList.map{ case (cell, cls) => Th(cell.blocks.flatMap(blockToHtml).toList, `class` = cls)}
+        ) :: immutable.Nil
+      ),
+      tbody = if (rows.nonEmpty) {
+        TBody(
+          rows.toList.map {
+            row => Tr((row.cells zip cc).toList.map{ case (cell, cls) => Td(elems = cell.blocks.flatMap(blockToHtml).toList, `class`=cls) })
+          }
+        )
+      } else null,
+      `class` = "doctbl")
+  }
+
   def typeToHtml(tpes: List[model.TypeEntity], hasLinks: Boolean): Elems = tpes match {
     case Nil         => NoElems
     case List(tpe)   => typeToHtml(tpe, hasLinks)
@@ -179,7 +214,7 @@ abstract class HtmlPage extends Page { thisPage =>
   }
 
   def hasPage(e: DocTemplateEntity) = {
-    e.isPackage || e.isTrait || e.isClass || e.isObject || e.isCaseClass
+    e.isPackage || e.isTrait || e.isClass || e.isObject || e.isCase
   }
 
   /** Returns the HTML code that represents the template in `tpl` as a hyperlinked name. */
@@ -204,7 +239,7 @@ abstract class HtmlPage extends Page { thisPage =>
 
   def permalink(template: Entity, isSelf: Boolean = true): Elem =
     Span(`class`= "permalink", elems=
-      A(href=memberToUrl(template, isSelf), title="Permalink", elems =
+      A(href=memberToUrl(template), title="Permalink", elems =
         I(`class`="material-icons", elems=Txt("\uE157"))
         ))
 
@@ -235,16 +270,15 @@ abstract class HtmlPage extends Page { thisPage =>
         case None => NoElems
       })
 
-  private def memberToUrl(template: Entity, isSelf: Boolean = true): String = {
+  private def memberToUrl(template: Entity): String = {
     val (signature: Option[String], containingTemplate: TemplateEntity) = template match {
-      case dte: DocTemplateEntity if (!isSelf) => (Some(dte.signature), dte.inTemplate)
       case dte: DocTemplateEntity => (None, dte)
       case me: MemberEntity => (Some(me.signature), me.inTemplate)
       case tpl => (None, tpl)
     }
 
     val templatePath = templateToPath(containingTemplate)
-    val url = "../" * (templatePath.size - 1) + templatePath.reverse.mkString("/")
+    val url = "../" * (thisPage.path.size - 1) + templatePath.reverse.mkString("/")
     url + signature.map("#" + _).getOrElse("")
   }
 }

@@ -1,9 +1,20 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools
 package partest
+import nest.PathSettings
 
-import nest.PathSettings.srcDir
-
-object TestKinds {
+class TestKinds(pathSettings: PathSettings) {
   val standardKinds = ("pos neg run jvm res scalap specialized instrumented presentation" split "\\s+").toList
 
   def denotesTestFile(p: Path) = p.isFile && p.hasExtension("scala", "res", "xml")
@@ -18,7 +29,7 @@ object TestKinds {
   def logOf(p: Path) = p.parent / s"${p.stripExtension}-${kindOf(p)}.log"
 
   // true if a test path matches the --grep expression.
-  private def pathMatchesExpr(path: Path, expr: String) = {
+  private[this] def pathMatchesExpr(path: Path, expr: String) = {
     // Matches the expression if any source file contains the expr,
     // or if the checkfile contains it, or if the filename contains
     // it (the last is case-insensitive.)
@@ -29,15 +40,24 @@ object TestKinds {
     def candidates = {
       (path changeExtension "check") +: {
         if (path.isFile) List(path)
-        else path.toDirectory.deepList() filter (_.isJavaOrScala) toList
+        else path.toDirectory.deepList().filter(_.isJavaOrScala).toList
       }
     }
 
     (candidates exists matches)
   }
 
-  def testsFor(kind: String): List[Path] = (srcDir / kind toDirectory).list.toList filter denotesTestPath
+  def testsFor(kind: String): (List[Path], List[Path]) = {
+    val (ti, others) = (pathSettings.srcDir / kind).toDirectory.list.partition(denotesTestPath)
+    val ts = ti.toList
+    val names = ts.toSet
+    def warnable(p: Path) = ((p.hasExtension("flags") || p.hasExtension("check"))
+      && List("scala", "res").forall(x => !names(p.changeExtension(x)))
+      && !names(p.parent / p.stripExtension)
+    )
+    (ts, others.filter(warnable).toList)
+  }
   def grepFor(expr: String): List[Path]  = standardTests filter (t => pathMatchesExpr(t, expr))
-  def standardTests: List[Path]          = standardKinds flatMap testsFor
+  def standardTests: List[Path]          = standardKinds flatMap (k => testsFor(k)._1)
   def failedTests: List[Path]            = standardTests filter (p => logOf(p).isFile)
 }

@@ -9,7 +9,7 @@ package scala {
 }
 
 object Test extends App {
-  def key(sym: Symbol) = sym + ": " + sym.info
+  def key(sym: Symbol) = s"$sym: ${sym.info}"
   def test(tpe: Type, receiver: Any, method: String, args: Any*): Unit = {
     def wrap[T](op: => T) =
       try {
@@ -20,10 +20,10 @@ object Test extends App {
       } catch {
         case ex: Throwable =>
           val realex = scala.ExceptionUtils.unwrapThrowable(ex)
-          println(realex.getClass + ": " + realex.getMessage)
+          println(s"${realex.getClass}: ${realex.getMessage}")
       }
     print(s"testing ${tpe.typeSymbol.name}.$method: ")
-    wrap({
+    wrap {
       if (method == termNames.CONSTRUCTOR.toString) {
         val ctor = tpe.decl(termNames.CONSTRUCTOR).asMethod
         cm.reflectClass(ctor.owner.asClass).reflectConstructor(ctor)(args: _*)
@@ -31,7 +31,7 @@ object Test extends App {
         val meth = tpe.decl(TermName(method).encodedName.toTermName).asMethod
         cm.reflect(receiver).reflectMethod(meth)(args: _*)
       }
-    })
+    }
   }
 
   println("============\nAny")
@@ -63,10 +63,6 @@ object Test extends App {
   typeOf[AnyRef].members.toList.sortBy(key).foreach(sym => println(key(sym)))
   test(typeOf[AnyRef], "2", "!=", "2")
   test(typeOf[AnyRef], "2", "##")
-  test(typeOf[AnyRef], "2", "$asInstanceOf")
-  test(typeOf[AnyRef], "2", "$asInstanceOf", typeOf[String])
-  test(typeOf[AnyRef], "2", "$isInstanceOf")
-  test(typeOf[AnyRef], "2", "$isInstanceOf", typeOf[String])
   test(typeOf[AnyRef], "2", "==", "2")
   test(typeOf[AnyRef], "2", "clone")
   test(typeOf[AnyRef], "2", "eq", "2")

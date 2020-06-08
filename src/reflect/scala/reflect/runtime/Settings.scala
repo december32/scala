@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect
 package runtime
@@ -44,9 +56,10 @@ private[reflect] class Settings extends MutableSettings {
   val uniqid            = new BooleanSetting(false)
   val verbose           = new BooleanSetting(false)
 
+  val YhotStatisticsEnabled = new BooleanSetting(false)
+  val YstatisticsEnabled    = new BooleanSetting(false)
+
   val Yrecursion        = new IntSetting(0)
-  val maxClassfileName  = new IntSetting(255)
-  def isScala211        = true
   def isScala212        = true
-  private[scala] def isScala213 = false
+  private[scala] def isScala213 = true
 }

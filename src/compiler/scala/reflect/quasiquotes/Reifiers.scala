@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.reflect
 package quasiquotes
 
@@ -36,9 +48,9 @@ trait Reifiers { self: Quasiquotes =>
      *    and ends with reified tree:
      *
      *      {
-     *        val name$1: universe.TermName = universe.build.freshTermName(prefix1)
+     *        val name\$1: universe.TermName = universe.build.freshTermName(prefix1)
      *        ...
-     *        val name$N: universe.TermName = universe.build.freshTermName(prefixN)
+     *        val name\$N: universe.TermName = universe.build.freshTermName(prefixN)
      *        tree
      *      }
      *
@@ -59,7 +71,7 @@ trait Reifiers { self: Quasiquotes =>
       if (isReifyingExpressions) {
         val freshdefs = nameMap.iterator.map {
           case (origname, names) =>
-            assert(names.size == 1)
+            assert(names.size == 1, "Require one name")
             val FreshName(prefix) = origname
             val nameTypeName = if (origname.isTermName) tpnme.TermName else tpnme.TypeName
             val freshName = if (origname.isTermName) nme.freshTermName else nme.freshTypeName
@@ -336,9 +348,9 @@ trait Reifiers { self: Quasiquotes =>
      *
      *  Sample execution of previous concrete list reifier:
      *
-     *    > val lst = List(foo, bar, qq$f3948f9s$1)
+     *    > val lst = List(foo, bar, qq\$f3948f9s\$1)
      *    > reifyHighRankList(lst) { ... } { ... }
-     *    q"List($foo, $bar) ++ ${holeMap(qq$f3948f9s$1).tree}"
+     *    q"List(\$foo, \$bar) ++ \${holeMap(qq\$f3948f9s\$1).tree}"
      */
     def reifyHighRankList(xs: List[Any])(fill: PartialFunction[Any, Tree])(fallback: Any => Tree): Tree
 
@@ -361,7 +373,7 @@ trait Reifiers { self: Quasiquotes =>
       case List(Placeholder(Hole(tree, DotDotDot))) => tree
     }
 
-    /** Reifies arbitrary list filling ..$x and ...$y holeMap when they are put
+    /** Reifies arbitrary list filling ..\$x and ...\$y holeMap when they are put
      *  in the correct position. Falls back to regular reification for zero rank
      *  elements.
      */
@@ -473,7 +485,7 @@ trait Reifiers { self: Quasiquotes =>
         val mods = m.annotations.collect { case ModsPlaceholder(hole: UnapplyHole) => hole }
         mods match {
           case hole :: Nil =>
-            if (m.annotations.length != 1) c.abort(hole.pos, "Can't extract modifiers together with annotations, consider extracting just modifiers")
+            if (m.annotations.lengthIs != 1) c.abort(hole.pos, "Can't extract modifiers together with annotations, consider extracting just modifiers")
             ensureNoExplicitFlags(m, hole.pos)
             hole.treeNoUnlift
           case _ :: hole :: _ =>

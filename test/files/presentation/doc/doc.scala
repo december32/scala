@@ -57,8 +57,6 @@ object Test extends InteractiveTest {
       def warnNoLink = false
       def findExternalLink(sym: Symbol, name: String) = None
 
-      override def forScaladoc = true
-
       def getComment(sym: Symbol, source: SourceFile, fragments: List[(Symbol,SourceFile)]): Option[Comment] = {
         val docResponse = new Response[(String, String, Position)]
         askDocComment(sym, source, sym.owner, fragments, docResponse)
@@ -110,7 +108,7 @@ object Test extends InteractiveTest {
                 case Some(comment) =>
                   import comment._
                   def cnt(bodies: Iterable[Body]) = bodies.size
-                  val actual = cnt(example) + cnt(version) + cnt(since) + cnt(todo) + cnt(note) + cnt(see)
+                  val actual = cnt(example) + cnt(version.toList) + cnt(since.toList) + cnt(todo) + cnt(note) + cnt(see)
                   if (actual != i)
                     println(s"Got docComment with $actual tags instead of $i, file text:\n$newText")
               }

@@ -1,24 +1,28 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2002-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala
 package runtime
 
 final class RichFloat(val self: Float) extends AnyVal with FractionalProxy[Float] {
   protected def num: Fractional[Float] = scala.math.Numeric.FloatIsFractional
-  protected def ord: Ordering[Float]   = scala.math.Ordering.Float
+  protected def ord: Ordering[Float]   = scala.math.Ordering.Float.TotalOrdering
 
-  override def doubleValue() = self.toDouble
-  override def floatValue()  = self
-  override def longValue()   = self.toLong
-  override def intValue()    = self.toInt
-  override def byteValue()   = self.toByte
-  override def shortValue()  = self.toShort
+  override def doubleValue = self.toDouble
+  override def floatValue  = self
+  override def longValue   = self.toLong
+  override def intValue    = self.toInt
+  override def byteValue   = self.toByte
+  override def shortValue  = self.toShort
 
   override def isWhole = {
     val l = self.toLong
@@ -34,13 +38,14 @@ final class RichFloat(val self: Float) extends AnyVal with FractionalProxy[Float
 
   def isNaN: Boolean         = java.lang.Float.isNaN(self)
   def isInfinity: Boolean    = java.lang.Float.isInfinite(self)
+  def isFinite: Boolean      = java.lang.Float.isFinite(self)
   def isPosInfinity: Boolean = Float.PositiveInfinity == self
   def isNegInfinity: Boolean = Float.NegativeInfinity == self
 
   override def abs: Float              = math.abs(self)
   override def max(that: Float): Float = math.max(self, that)
   override def min(that: Float): Float = math.min(self, that)
-  override def signum: Int             = math.signum(self).toInt  // !!! NaN
+  @deprecated("signum does not handle -0.0f or Float.NaN; use `sign` method instead", since = "2.13.0") override def signum: Int = num.signum(self)
 
   def round: Int   = math.round(self)
   def ceil: Float  = math.ceil(self.toDouble).toFloat

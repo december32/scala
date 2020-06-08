@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
@@ -8,8 +15,8 @@ package reflect
 package internal
 
 import scala.annotation.tailrec
-import scala.collection.AbstractIterable
-import scala.collection.generic.Clearable
+import scala.collection.{AbstractIterable, AbstractIterator}
+import scala.collection.mutable.Clearable
 import scala.reflect.internal.util.{Statistics, StatisticsStatics}
 
 trait Scopes extends api.Scopes { self: SymbolTable =>
@@ -41,6 +48,8 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
     def depth = owner.nestingLevel
     override def hashCode(): Int = sym.name.start
     override def toString() = s"$sym (depth=$depth)"
+    // OPT: compare raw names when pre-flatten, saving needsFlatClasses within the loop
+    final def name(flat: Boolean): Name = if (flat) sym.name else sym.rawname
   }
 
   private def newScopeEntry(sym: Symbol, owner: Scope): ScopeEntry = {
@@ -52,6 +61,19 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
 
   object Scope {
     def unapplySeq(decls: Scope): Some[Seq[Symbol]] = Some(decls.toList)
+  }
+
+  /** A default Scope iterator, that retrieves elements in the order given by ScopeEntry. */
+  private[Scopes] class ScopeIterator(owner: Scope) extends Iterator[Symbol] {
+    private[this] var elem: ScopeEntry = owner.elems
+
+    def hasNext: Boolean = (elem ne null) && (elem.owner == this.owner)
+    def next(): Symbol =
+      if (hasNext) {
+        val res = elem
+        elem = elem.next
+        res.sym
+      } else throw new NoSuchElementException
   }
 
   /** Note: constructor is protected to force everyone to use the factory methods newScope or newNestedScope instead.
@@ -73,9 +95,9 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
 
     /** a cache for all elements, to be used by symbol iterator.
      */
-    private var elemsCache: List[Symbol] = null
-    private var cachedSize = -1
-    private def flushElemsCache() {
+    private[this] var elemsCache: List[Symbol] = null
+    private[this] var cachedSize = -1
+    private def flushElemsCache(): Unit = {
       elemsCache = null
       cachedSize = -1
     }
@@ -83,12 +105,12 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
     /** size and mask of hash tables
      *  todo: make hashtables grow?
      */
-    private val HASHSIZE = 0x80
-    private val HASHMASK = 0x7f
+    private final val HASHSIZE = 0x80
+    private final val HASHMASK = 0x7f
 
     /** the threshold number of entries from which a hashtable is constructed.
      */
-    private val MIN_HASH = 8
+    private final val MIN_HASH = 8
 
     /** Returns a new scope with the same content as this one. */
     def cloneScope: Scope = newScopeWith(this.toList: _*)
@@ -115,7 +137,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
 
     /** enter a scope entry
      */
-    protected def enterEntry(e: ScopeEntry) {
+    protected def enterEntry(e: ScopeEntry): Unit = {
       flushElemsCache()
       if (hashtable ne null)
         enterInHash(e)
@@ -138,7 +160,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
 
     /** enter a symbol, asserting that no symbol with same name exists in scope
      */
-    def enterUnique(sym: Symbol) {
+    def enterUnique(sym: Symbol): Unit = {
       assert(lookup(sym.name) == NoSymbol, (sym.fullLocationString, lookup(sym.name).fullLocationString))
       enter(sym)
     }
@@ -149,12 +171,12 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
       else existing.sym.asInstanceOf[T]
     }
 
-    private def createHash() {
+    private def createHash(): Unit = {
       hashtable = new Array[ScopeEntry](HASHSIZE)
       enterAllInHash(elems)
     }
 
-    private def enterAllInHash(e: ScopeEntry, n: Int = 0) {
+    private def enterAllInHash(e: ScopeEntry, n: Int = 0): Unit = {
       if (e ne null) {
         if (n < maxRecursions) {
           enterAllInHash(e.next, n + 1)
@@ -171,7 +193,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
       }
     }
 
-    def rehash(sym: Symbol, newname: Name) {
+    def rehash(sym: Symbol, newname: Name): Unit = {
       if (hashtable ne null) {
         val index = sym.name.start & HASHMASK
         var e1 = hashtable(index)
@@ -198,7 +220,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
 
     /** remove entry
      */
-    def unlink(e: ScopeEntry) {
+    def unlink(e: ScopeEntry): Unit = {
       if (elems == e) {
         elems = e.next
       } else {
@@ -220,7 +242,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
     }
 
     /** remove symbol */
-    def unlink(sym: Symbol) {
+    def unlink(sym: Symbol): Unit = {
       var e = lookupEntry(sym.name)
       while (e ne null) {
         if (e.sym == sym) unlink(e)
@@ -274,14 +296,14 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
 
     /** Returns an iterator yielding every symbol with given name in this scope.
      */
-    def lookupAll(name: Name): Iterator[Symbol] = new Iterator[Symbol] {
-      var e = lookupEntry(name)
+    def lookupAll(name: Name): Iterator[Symbol] = new AbstractIterator[Symbol] {
+      private[this] var e = lookupEntry(name)
       def hasNext: Boolean = e ne null
       def next(): Symbol = try e.sym finally e = lookupNextEntry(e)
     }
 
-    def lookupAllEntries(name: Name): Iterator[ScopeEntry] = new Iterator[ScopeEntry] {
-      var e = lookupEntry(name)
+    def lookupAllEntries(name: Name): Iterator[ScopeEntry] = new AbstractIterator[ScopeEntry] {
+      private[this] var e = lookupEntry(name)
       def hasNext: Boolean = e ne null
       def next(): ScopeEntry = try e finally e = lookupNextEntry(e)
     }
@@ -308,20 +330,19 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
      *  change to use iterators as too costly.
      */
     def lookupEntry(name: Name): ScopeEntry = {
-      val startTime = if (StatisticsStatics.areSomeColdStatsEnabled) statistics.startTimer(statistics.scopeLookupTime) else null
       var e: ScopeEntry = null
+      val flat = phase.flatClasses
       if (hashtable ne null) {
         e = hashtable(name.start & HASHMASK)
-        while ((e ne null) && e.sym.name != name) {
+        while ((e ne null) && (e.name(flat) ne name)) {
           e = e.tail
         }
       } else {
         e = elems
-        while ((e ne null) && e.sym.name != name) {
+        while ((e ne null) && (e.name(flat) ne name)) {
           e = e.next
         }
       }
-      if (StatisticsStatics.areSomeColdStatsEnabled) statistics.stopTimer(statistics.scopeLookupTime, startTime)
       e
     }
 
@@ -332,10 +353,12 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
      */
     def lookupNextEntry(entry: ScopeEntry): ScopeEntry = {
       var e = entry
+      val flat = phase.flatClasses
+      val entryName = entry.name(flat)
       if (hashtable ne null)
-        do { e = e.tail } while ((e ne null) && e.sym.name != entry.sym.name)
+        do { e = e.tail } while ((e ne null) && e.name(flat) != entryName)
       else
-        do { e = e.next } while ((e ne null) && e.sym.name != entry.sym.name)
+        do { e = e.next } while ((e ne null) && e.name(flat) != entryName)
       e
     }
 
@@ -373,7 +396,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
         }
         entryContainsSym(this lookupEntry sym.name)
       }
-      other.toList forall scopeContainsSym
+      other.reverseIterator.forall(scopeContainsSym)
     }
 
     /** Return all symbols as a list in the order they were entered in this scope.
@@ -406,21 +429,31 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
      */
     def iterator: Iterator[Symbol] = toList.iterator
 
+    /** Returns all symbols as an iterator, in an order reversed to that in which they
+      * were entered: symbols first in the scopes are last out of the iterator.
+      * NOTE: when using the `reverseIterator`, it is not safe to mutate the Scope.
+      *  So, be careful not to use this when you do need to mutate this Scope. */
+    def reverseIterator: Iterator[Symbol] = new ScopeIterator(this)
+
     override def foreach[U](p: Symbol => U): Unit = toList foreach p
 
-    override def filterNot(p: Symbol => Boolean): Scope = (
-      if (toList exists p) newScopeWith(toList filterNot p: _*)
-      else this
-    )
-    override def filter(p: Symbol => Boolean): Scope = (
-      if (toList forall p) this
-      else newScopeWith(toList filter p: _*)
-    )
+    override def filterNot(p: Symbol => Boolean): Scope = {
+      val result = toList
+      val filtered = result.filterNot(p)
+      if (result eq filtered) this
+      else newScopeWith(filtered: _*)
+    }
+    override def filter(p: Symbol => Boolean): Scope = {
+      val result = toList
+      val filtered = result.filter(p)
+      if (sameLength(result, filtered)) this else newScopeWith(filtered: _*)
+    }
+
     @deprecated("use `toList.reverse` instead", "2.10.0") // Used in sbt 0.12.4
     def reverse: List[Symbol] = toList.reverse
 
-    override def mkString(start: String, sep: String, end: String) =
-      toList.map(_.defString).mkString(start, sep, end)
+    override def addString(sb: StringBuilder, start: String, sep: String, end: String) =
+      toList.map(_.defString).addString(sb, start, sep, end)
 
     override def toString(): String = mkString("Scope{\n  ", ";\n  ", "\n}")
   }
@@ -496,7 +529,7 @@ trait Scopes extends api.Scopes { self: SymbolTable =>
   /** The empty scope (immutable).
    */
   object EmptyScope extends Scope {
-    override def enterEntry(e: ScopeEntry) {
+    override def enterEntry(e: ScopeEntry): Unit = {
       abort("EmptyScope.enter")
     }
   }
@@ -512,5 +545,4 @@ trait ScopeStats {
   self: Statistics =>
   val scopeCountView = newView("#created scopes")(symbolTable.scopeCount)
   val scopePopulationTime = newTimer("time spent in scope population")
-  val scopeLookupTime = newTimer("time spent in scope lookup")
 }

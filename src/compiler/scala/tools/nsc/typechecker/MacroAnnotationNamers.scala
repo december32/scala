@@ -1,10 +1,22 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.nsc.typechecker
+
+import scala.tools.nsc.Reporting.WarningCategory
 
 // imported from scalamacros/paradise
 trait MacroAnnotationNamers { self: Analyzer =>
   import global._
-  import analyzer._
-  import definitions._
   import scala.reflect.internal.Flags._
   import scala.reflect.internal.Mode._
 
@@ -23,7 +35,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
           case tree @ Import(_, _) =>
             createAssignAndEnterSymbol(tree)
             finishSymbol(tree)
-            returnContext = context.make(tree)
+            returnContext = context.makeImportContext(tree)
           case tree: MemberDef =>
             createAssignAndEnterSymbol(tree)
             finishSymbol(tree)
@@ -231,10 +243,10 @@ trait MacroAnnotationNamers { self: Analyzer =>
             }
             val owner = tree.symbol.owner
             if (settings.warnPackageObjectClasses && owner.isPackageObjectClass && !mods.isImplicit) {
-              reporter.warning(tree.pos,
+              context.warning(tree.pos,
                                "it is not recommended to define classes/objects inside of package objects.\n" +
-                               "If possible, define " + tree.symbol + " in " + owner.skipPackageObject + " instead."
-                              )
+                               "If possible, define " + tree.symbol + " in " + owner.skipPackageObject + " instead.",
+                              WarningCategory.LintPackageObjectClasses)
             }
             // Suggested location only.
             if (mods.isImplicit) {
@@ -272,8 +284,13 @@ trait MacroAnnotationNamers { self: Analyzer =>
             if (isEnumConstant(tree))
               tree.symbol setInfo ConstantType(Constant(tree.symbol))
           case tree @ DefDef(_, nme.CONSTRUCTOR, _, _, _, _) =>
+            if (mexists(tree.vparamss)(_.mods.hasDefault))
+              enterDefaultGetters(tree.symbol, tree, tree.vparamss, tree.tparams)
             sym setInfo completerOf(tree)
           case tree @ DefDef(mods, name, tparams, _, _, _) =>
+            if (mexists(tree.vparamss)(_.mods.hasDefault))
+              enterDefaultGetters(tree.symbol, tree, tree.vparamss, tree.tparams)
+
             val completer =
               if (sym hasFlag SYNTHETIC) {
                 if (name == nme.copy) copyMethodCompleter(tree)
@@ -351,7 +368,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
       }
     }
 
-    protected def finishSymbolMaybeExpandee(tree: Tree, annZippers: List[treeInfo.AnnotationZipper]) {
+    protected def finishSymbolMaybeExpandee(tree: Tree, annZippers: List[treeInfo.AnnotationZipper]): Unit = {
       val sym = tree.symbol
       unmarkWeak(sym)
       markMaybeExpandee(sym)
@@ -414,7 +431,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
     //   * non-FSMEC completer for the module and then FSMEC => fallback should call native completer
     //   * FSMEC from enterSyntheticSym for a phantom module and then FSMEC again => fallback should do nothing
     // now it's easy to see that both are correctly handled here
-    protected def finishSymbolMaybeExpandeeCompanion(tree: Tree, m: Symbol, c: Symbol) {
+    protected def finishSymbolMaybeExpandeeCompanion(tree: Tree, m: Symbol, c: Symbol): Unit = {
       val worthBackingUp = !m.rawInfo.isInstanceOf[MacroAnnotationNamer#MaybeExpandeeCompanionCompleter]
       if (worthBackingUp) backupCompleter(m)
       markMaybeExpandee(m)
@@ -469,12 +486,12 @@ trait MacroAnnotationNamers { self: Analyzer =>
         var selectors = imp.tree.selectors
         def current = selectors.head
         while (selectors != Nil && result == NoSymbol) {
-          if (current.rename == name.toTermName)
+          if (current.introduces(name))
             result = nonLocalMember(pre, if (name.isTypeName) current.name.toTypeName else current.name)
           else if (selectors.head.name == name.toTermName)
-                 renamed = true
-          else if (selectors.head.name == nme.WILDCARD && !renamed)
-                 result = nonLocalMember(pre, name)
+            renamed = true
+          else if (current.isWildcard && !renamed)
+            result = nonLocalMember(pre, name)
           if (result == NoSymbol)
             selectors = selectors.tail
         }

@@ -1,12 +1,25 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.collection
 package mutable
 
-import java.io.{ObjectInputStream, ObjectOutputStream}
-
-import scala.runtime.ScalaRunTime
-import scala.reflect.ClassTag
-import scala.util.hashing.MurmurHash3
 import java.util.Arrays
+
+import scala.collection.Stepper.EfficientSplit
+import scala.collection.convert.impl._
+import scala.reflect.ClassTag
+import scala.runtime.ScalaRunTime
+import scala.util.hashing.MurmurHash3
 
 /**
   *  A collection representing `Array[T]`. Unlike `ArrayBuffer` it is always backed by the same
@@ -14,9 +27,6 @@ import java.util.Arrays
   *
   *  @tparam T    type of the elements in this wrapped array.
   *
-  *  @author  Martin Odersky, Stephane Micheloud
-  *  @version 1.0
-  *  @since 2.8
   *  @define Coll `ArraySeq`
   *  @define coll wrapped array
   *  @define orderDependent
@@ -25,64 +35,79 @@ import java.util.Arrays
   *  @define willNotTerminateInf
   */
 @SerialVersionUID(3L)
-abstract class ArraySeq[T]
+sealed abstract class ArraySeq[T]
   extends AbstractSeq[T]
     with IndexedSeq[T]
     with IndexedSeqOps[T, ArraySeq, ArraySeq[T]]
-    with IndexedOptimizedSeq[T]
-    with StrictOptimizedSeqOps[T, ArraySeq, ArraySeq[T]] {
+    with StrictOptimizedSeqOps[T, ArraySeq, ArraySeq[T]]
+    with Serializable {
 
   override def iterableFactory: scala.collection.SeqFactory[ArraySeq] = ArraySeq.untagged
 
-  override protected def fromSpecificIterable(coll: scala.collection.Iterable[T]): ArraySeq[T] = {
-    val b = ArrayBuilder.make(elemTag)
+  override protected def fromSpecific(coll: scala.collection.IterableOnce[T]): ArraySeq[T] = {
+    val b = ArrayBuilder.make(elemTag).asInstanceOf[ArrayBuilder[T]]
     val s = coll.knownSize
     if(s > 0) b.sizeHint(s)
     b ++= coll
     ArraySeq.make(b.result())
   }
-  override protected def newSpecificBuilder: Builder[T, ArraySeq[T]] = ArraySeq.newBuilder(elemTag)
+  override protected def newSpecificBuilder: Builder[T, ArraySeq[T]] = ArraySeq.newBuilder(elemTag).asInstanceOf[Builder[T, ArraySeq[T]]]
+  override def empty: ArraySeq[T] = ArraySeq.empty(elemTag.asInstanceOf[ClassTag[T]])
 
-  /** The tag of the element type */
-  def elemTag: ClassTag[T]
+  /** The tag of the element type. This does not have to be equal to the element type of this ArraySeq. A primitive
+    * ArraySeq can be backed by an array of boxed values and a reference ArraySeq can be backed by an array of a supertype
+    * or subtype of the element type. */
+  def elemTag: ClassTag[_]
 
   /** Update element at given index */
-  def update(index: Int, elem: T): Unit
+  def update(@deprecatedName("idx", "2.13.0") index: Int, elem: T): Unit
 
-  /** The underlying array */
-  def array: Array[T]
+  /** The underlying array. Its element type does not have to be equal to the element type of this ArraySeq. A primitive
+    * ArraySeq can be backed by an array of boxed values and a reference ArraySeq can be backed by an array of a supertype
+    * or subtype of the element type. */
+  def array: Array[_]
 
-  override def toArray[U >: T : ClassTag]: Array[U] = {
-    val thatElementClass = implicitly[ClassTag[U]].runtimeClass
-    if (array.getClass.getComponentType eq thatElementClass)
-      array.asInstanceOf[Array[U]]
-    else
-      super.toArray[U]
-  }
+  override def stepper[S <: Stepper[_]](implicit shape: StepperShape[T, S]): S with EfficientSplit
 
-  override def className = "ArraySeq"
+  override protected[this] def className = "ArraySeq"
 
   /** Clones this object, including the underlying Array. */
-  override def clone(): ArraySeq[T] = ArraySeq.make(array.clone())
+  override def clone(): ArraySeq[T] = ArraySeq.make(array.clone()).asInstanceOf[ArraySeq[T]]
 
-  override def copyToArray[B >: T](xs: Array[B], start: Int = 0): xs.type = copyToArray[B](xs, start, length)
+  override def copyToArray[B >: T](xs: Array[B], start: Int): Int = copyToArray[B](xs, start, length)
 
-  override def copyToArray[B >: T](xs: Array[B], start: Int, len: Int): xs.type = {
-    val l = scala.math.min(scala.math.min(len, length), xs.length-start)
-    if(l > 0) Array.copy(array, 0, xs, start, l)
-    xs
+  override def copyToArray[B >: T](xs: Array[B], start: Int, len: Int): Int = {
+    val copied = IterableOnce.elemsToCopyToArray(length, xs.length, start, len)
+    if(copied > 0) {
+      Array.copy(array, 0, xs, start, copied)
+    }
+    copied
   }
 
-  override protected[this] def writeReplace(): AnyRef = this
+  override def equals(other: Any): Boolean = other match {
+    case that: ArraySeq[_] if this.array.length != that.array.length =>
+      false
+    case _ =>
+      super.equals(other)
+  }
+
+  override def sorted[B >: T](implicit ord: Ordering[B]): ArraySeq[T] =
+    ArraySeq.make(array.sorted(ord.asInstanceOf[Ordering[Any]])).asInstanceOf[ArraySeq[T]]
+
+  override def sortInPlace[B >: T]()(implicit ord: Ordering[B]): this.type = {
+    if (length > 1) scala.util.Sorting.stableSort(array.asInstanceOf[Array[B]])
+    this
+  }
 }
 
 /** A companion object used to create instances of `ArraySeq`.
   */
+@SerialVersionUID(3L)
 object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
   val untagged: SeqFactory[ArraySeq] = new ClassTagSeqFactory.AnySeqDelegate(self)
 
   // This is reused for all calls to empty.
-  private val EmptyArraySeq  = new ofRef[AnyRef](new Array[AnyRef](0))
+  private[this] val EmptyArraySeq  = new ofRef[AnyRef](new Array[AnyRef](0))
   def empty[T : ClassTag]: ArraySeq[T] = EmptyArraySeq.asInstanceOf[ArraySeq[T]]
 
   def from[A : ClassTag](it: scala.collection.IterableOnce[A]): ArraySeq[A] = {
@@ -129,15 +154,24 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofRef[T <: AnyRef](val array: Array[T]) extends ArraySeq[T] {
-    lazy val elemTag = ClassTag[T](array.getClass.getComponentType)
+    def elemTag = ClassTag[T](array.getClass.getComponentType)
     def length: Int = array.length
-    def apply(index: Int): T = array(index).asInstanceOf[T]
+    def apply(index: Int): T = array(index)
     def update(index: Int, elem: T): Unit = { array(index) = elem }
     override def hashCode = MurmurHash3.arraySeqHash(array)
     override def equals(that: Any) = that match {
-      case that: ofRef[_] => Arrays.equals(array.asInstanceOf[Array[AnyRef]], that.array.asInstanceOf[Array[AnyRef]])
+      case that: ofRef[_] =>
+        Array.equals(
+          this.array.asInstanceOf[Array[AnyRef]],
+          that.array.asInstanceOf[Array[AnyRef]])
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[T] = new ArrayOps.ArrayIterator[T](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[T, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        new ObjectArrayStepper(array, 0, array.length)
+      else shape.parUnbox(new ObjectArrayStepper(array, 0, array.length).asInstanceOf[AnyStepper[T] with EfficientSplit])
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -146,11 +180,17 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
     def length: Int = array.length
     def apply(index: Int): Byte = array(index)
     def update(index: Int, elem: Byte): Unit = { array(index) = elem }
-    override def hashCode = MurmurHash3.byteArraySeqHash(array)
+    override def hashCode = MurmurHash3.arraySeqHash(array)
     override def equals(that: Any) = that match {
       case that: ofByte => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Byte] = new ArrayOps.ArrayIterator[Byte](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Byte, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParIntStepper(new WidenedByteArrayStepper(array, 0, array.length))
+      else new WidenedByteArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -164,6 +204,12 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofShort => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Short] = new ArrayOps.ArrayIterator[Short](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Short, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParIntStepper(new WidenedShortArrayStepper(array, 0, array.length))
+      else new WidenedShortArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -176,6 +222,33 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
     override def equals(that: Any) = that match {
       case that: ofChar => Arrays.equals(array, that.array)
       case _ => super.equals(that)
+    }
+    override def iterator: Iterator[Char] = new ArrayOps.ArrayIterator[Char](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Char, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParIntStepper(new WidenedCharArrayStepper(array, 0, array.length))
+      else new WidenedCharArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
+
+    override def addString(sb: StringBuilder, start: String, sep: String, end: String): StringBuilder = {
+      val jsb = sb.underlying
+      if (start.length != 0) jsb.append(start)
+      val len = array.length
+      if (len != 0) {
+        if (sep.isEmpty) jsb.append(array)
+        else {
+          jsb.ensureCapacity(jsb.length + len + end.length + (len - 1) * sep.length)
+          jsb.append(array(0))
+          var i = 1
+          while (i < len) {
+            jsb.append(sep)
+            jsb.append(array(i))
+            i += 1
+          }
+        }
+      }
+      if (end.length != 0) jsb.append(end)
+      sb
     }
   }
 
@@ -190,6 +263,12 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofInt => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Int] = new ArrayOps.ArrayIterator[Int](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Int, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParIntStepper(new IntArrayStepper(array, 0, array.length))
+      else new IntArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -203,6 +282,12 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofLong => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Long] = new ArrayOps.ArrayIterator[Long](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Long, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParLongStepper(new LongArrayStepper(array, 0, array.length))
+      else new LongArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -216,6 +301,12 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofFloat => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Float] = new ArrayOps.ArrayIterator[Float](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Float, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParDoubleStepper(new WidenedFloatArrayStepper(array, 0, array.length))
+      else new WidenedFloatArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -229,6 +320,12 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofDouble => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Double] = new ArrayOps.ArrayIterator[Double](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Double, S]): S with EfficientSplit = (
+      if(shape.shape == StepperShape.ReferenceShape)
+        AnyStepper.ofParDoubleStepper(new DoubleArrayStepper(array, 0, array.length))
+      else new DoubleArrayStepper(array, 0, array.length)
+      ).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -242,6 +339,9 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofBoolean => Arrays.equals(array, that.array)
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Boolean] = new ArrayOps.ArrayIterator[Boolean](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Boolean, S]): S with EfficientSplit =
+      new BoxedBooleanArrayStepper(array, 0, array.length).asInstanceOf[S with EfficientSplit]
   }
 
   @SerialVersionUID(3L)
@@ -255,10 +355,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       case that: ofUnit => array.length == that.array.length
       case _ => super.equals(that)
     }
+    override def iterator: Iterator[Unit] = new ArrayOps.ArrayIterator[Unit](array)
+    override def stepper[S <: Stepper[_]](implicit shape: StepperShape[Unit, S]): S with EfficientSplit =
+      new ObjectArrayStepper[AnyRef](array.asInstanceOf[Array[AnyRef]], 0, array.length).asInstanceOf[S with EfficientSplit]
   }
-
-  // scalac generates a `readReplace` method to discard the deserialized state (see https://github.com/scala/bug/issues/10412).
-  // This prevents it from serializing it in the first place:
-  private[this] def writeObject(out: ObjectOutputStream): Unit = ()
-  private[this] def readObject(in: ObjectInputStream): Unit = ()
 }

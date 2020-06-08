@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.nsc.profile
 
 import scala.tools.nsc.{Phase, Settings}
@@ -26,7 +38,7 @@ trait ProfilerPluginRun {
   /** called before a phase */
   def beforePhase(phase: Phase): Unit
 
-  /** called afer a phase a phase */
+  /** called after a phase */
   def afterPhase(phase: Phase): Unit
 
   /** called when the compile run completes */

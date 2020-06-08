@@ -28,8 +28,8 @@ values which are not implemented as objects in the underlying host
 system.
 
 User-defined Scala classes which do not explicitly inherit from
-`AnyVal` inherit directly or indirectly from `AnyRef`. They can
-not inherit from both `AnyRef` and `AnyVal`.
+`AnyVal` inherit directly or indirectly from `AnyRef`. They cannot
+inherit from both `AnyRef` and `AnyVal`.
 
 Classes `AnyRef` and `AnyVal` are required to provide only
 the members declared in class `Any`, but implementations may add
@@ -227,7 +227,7 @@ def equals(other: Any): Boolean = other match {
 ```
 
 The `hashCode` method returns an integer hashcode that maps equal
-numeric values to equal results. It is guaranteed to be the identity for
+numeric values to equal results. It is guaranteed to be the identity
 for type `Int` and for all subrange types.
 
 The `toString` method displays its receiver as an integer or
@@ -624,9 +624,10 @@ trait Node {
 ## The `Predef` Object
 
 The `Predef` object defines standard functions and type aliases
-for Scala programs. It is always implicitly imported, so that all its
-defined members are available without qualification. Its definition
-for the JVM environment conforms to the following signature:
+for Scala programs. It is implicitly imported, as described in
+[the chapter on name binding](02-identifiers-names-and-scopes.html),
+so that all its defined members are available without qualification.
+Its definition for the JVM environment conforms to the following signature:
 
 ```scala
 package scala

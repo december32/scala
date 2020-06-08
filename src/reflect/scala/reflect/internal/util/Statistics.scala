@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect.internal.util
 
@@ -20,12 +32,12 @@ abstract class Statistics(val symbolTable: SymbolTable, settings: MutableSetting
   type TimerSnapshot = (Long, Long)
 
   /** If enabled, increment counter by one */
-  @inline final def incCounter(c: Counter) {
+  @inline final def incCounter(c: Counter): Unit = {
     if (areStatisticsLocallyEnabled && c != null) c.value += 1
   }
 
   /** If enabled, increment counter by given delta */
-  @inline final def incCounter(c: Counter, delta: Int) {
+  @inline final def incCounter(c: Counter, delta: Int): Unit = {
     if (areStatisticsLocallyEnabled && c != null) c.value += delta
   }
 
@@ -40,7 +52,7 @@ abstract class Statistics(val symbolTable: SymbolTable, settings: MutableSetting
     if (areStatisticsLocallyEnabled && sc != null) sc.start() else null
 
   /** If enabled, stop subcounter from tracking its base counter. */
-  @inline final def stopCounter(sc: SubCounter, start: (Int, Int)) {
+  @inline final def stopCounter(sc: SubCounter, start: (Int, Int)): Unit = {
     if (areStatisticsLocallyEnabled && sc != null) sc.stop(start)
   }
 
@@ -49,7 +61,7 @@ abstract class Statistics(val symbolTable: SymbolTable, settings: MutableSetting
     if (areStatisticsLocallyEnabled && tm != null) tm.start() else null
 
   /** If enabled, stop timer */
-  @inline final def stopTimer(tm: Timer, start: TimerSnapshot) {
+  @inline final def stopTimer(tm: Timer, start: TimerSnapshot): Unit = {
     if (areStatisticsLocallyEnabled && tm != null) tm.stop(start)
   }
 
@@ -58,7 +70,7 @@ abstract class Statistics(val symbolTable: SymbolTable, settings: MutableSetting
     if (areStatisticsLocallyEnabled && timers != null) timers.push(timer) else null
 
   /** If enabled, stop and pop timer from timer stack */
-  @inline final def popTimer(timers: TimerStack, prev: TimerSnapshot) {
+  @inline final def popTimer(timers: TimerStack, prev: TimerSnapshot): Unit = {
     if (areStatisticsLocallyEnabled && timers != null) timers.pop(prev)
   }
 
@@ -169,17 +181,16 @@ quant)
 
   class SubCounter(prefix: String, override val underlying: Counter) extends Counter(prefix, underlying.phases) with SubQuantity {
     def start() = (value, underlying.value)
-    def stop(prev: (Int, Int)) {
+    def stop(prev: (Int, Int)): Unit = {
       val (value0, uvalue0) = prev
       value = value0 + underlying.value - uvalue0
     }
-    override def toString =
-      value + showPercent(value.toLong, underlying.value.toLong)
+    override def toString = s"${value}${showPercent(value.toLong, underlying.value.toLong)}"
   }
 
   class Timer(val prefix: String, val phases: Seq[String]) extends Quantity {
-    private val totalThreads = new AtomicInteger()
-    private val threadNanos = new ThreadLocal[LongRef] {
+    private[this] val totalThreads = new AtomicInteger()
+    private[this] val threadNanos = new ThreadLocal[LongRef] {
       override def initialValue() = {
         totalThreads.incrementAndGet()
         new LongRef(0)
@@ -191,7 +202,7 @@ quant)
     def start(): TimerSnapshot = {
       (threadNanos.get.elem, System.nanoTime())
     }
-    def stop(prev: TimerSnapshot) {
+    def stop(prev: TimerSnapshot): Unit = {
       val (nanos0, start) = prev
       val newThreadNanos = nanos0 + System.nanoTime() - start
       val threadNanosCount = threadNanos.get
@@ -254,7 +265,7 @@ quant)
    *  Note: Not threadsafe
    */
   class TimerStack {
-    private var elems: List[(StackableTimer, Long)] = Nil
+    private[this] var elems: List[(StackableTimer, Long)] = Nil
     /** Start given timer and push it onto the stack */
     def push(t: StackableTimer): TimerSnapshot = {
       elems = (t, 0L) :: elems
@@ -265,7 +276,7 @@ quant)
     def pop(prev: TimerSnapshot) = {
       val (nanos0, start) = prev
       val duration = System.nanoTime() - start
-      val (topTimer, nestedNanos) :: rest = elems
+      val (topTimer, nestedNanos) :: rest = elems: @unchecked
       topTimer.totalNanos.addAndGet(nanos0 + duration)
       topTimer.specificNanos += duration - nestedNanos
       topTimer.timings.incrementAndGet()
@@ -278,7 +289,7 @@ quant)
     }
   }
 
-  private val qs = new mutable.HashMap[String, Quantity]
+  private[this] val qs = new mutable.HashMap[String, Quantity]
   private[scala] var areColdStatsLocallyEnabled: Boolean = false
   private[scala] var areHotStatsLocallyEnabled: Boolean = false
 

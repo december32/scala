@@ -1,3 +1,6 @@
+
+// scalac: -Xfatal-warnings
+//
 import language._
 
 object Test {

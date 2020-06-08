@@ -1,10 +1,14 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2003-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala.collection
 package mutable
@@ -15,6 +19,12 @@ import scala.math.Ordering
 /** This class implements priority queues using a heap.
   *  To prioritize elements of type A there must be an implicit
   *  Ordering[A] available at creation.
+  *
+  *  If multiple elements have the same priority in the ordering of this
+  *  PriorityQueue, no guarantees are made regarding the order in which elements
+  *  are returned by `dequeue` or `dequeueAll`. In particular, that means this
+  *  class does not guarantee first in first out behaviour that may be
+  *  incorrectly inferred from the Queue part of the name of this class.
   *
   *  Only the `dequeue` and `dequeueAll` methods will return elements in priority
   *  order (while removing elements from the heap).  Standard collection methods
@@ -29,15 +39,11 @@ import scala.math.Ordering
   *  @example {{{
   *  val pq = collection.mutable.PriorityQueue(1, 2, 5, 3, 7)
   *  println(pq)                  // elements probably not in order
-  *  println(pq.clone.dequeueAll) // prints Vector(7, 5, 3, 2, 1)
+  *  println(pq.clone.dequeueAll) // prints ArraySeq(7, 5, 3, 2, 1)
   *  }}}
   *
   *  @tparam A    type of the elements in this priority queue.
   *  @param ord   implicit ordering used to compare the elements of type `A`.
-  *
-  *  @author  Matthias Zenger
-  *  @version 1.0, 03/05/2004
-  *  @since   1
   *
   *  @define Coll PriorityQueue
   *  @define coll priority queue
@@ -54,10 +60,18 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     with Builder[A, PriorityQueue[A]]
     with Cloneable[PriorityQueue[A]]
     with Growable[A]
+    with Serializable
 {
   import ord._
 
-  private class ResizableArrayAccess[A] extends ArrayBuffer[A] {
+  private class ResizableArrayAccess[A0] extends ArrayBuffer[A0] {
+    override def mapInPlace(f: A0 => A0): this.type = {
+      var i = 1 // see "we do not use array(0)" comment below (???)
+      val siz = this.size
+      while (i < siz) { this(i) = f(this(i)); i += 1 }
+      this
+    }
+
     def p_size0 = size0
     def p_size0_=(s: Int) = size0 = s
     def p_array = array
@@ -71,13 +85,16 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
 
   private val resarr = new ResizableArrayAccess[A]
 
-  resarr.p_size0 += 1                  // we do not use array(0)
+  resarr.p_size0 += 1                  // we do not use array(0) TODO: explain -- what is the first element even for?
   def length: Int = resarr.length - 1  // adjust length accordingly
   override def size: Int = length
+  override def knownSize: Int = length
   override def isEmpty: Boolean = resarr.p_size0 < 2
 
-  override protected def fromSpecificIterable(coll: scala.collection.Iterable[A]): PriorityQueue[A] = PriorityQueue.from(coll)
+  // not eligible for EvidenceIterableFactoryDefaults since C != CC[A] (PriorityQueue[A] != Iterable[A])
+  override protected def fromSpecific(coll: scala.collection.IterableOnce[A]): PriorityQueue[A] = PriorityQueue.from(coll)
   override protected def newSpecificBuilder: Builder[A, PriorityQueue[A]] = PriorityQueue.newBuilder
+  override def empty: PriorityQueue[A] = PriorityQueue.empty
 
   def mapInPlace(f: A => A): this.type = {
     resarr.mapInPlace(f)
@@ -205,7 +222,7 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
   /** Returns the element with the highest priority in the queue,
     *  and removes this element from the queue.
     *
-    *  @throws java.util.NoSuchElementException
+    *  @throws NoSuchElementException
     *  @return   the element with the highest priority.
     */
   def dequeue(): A =
@@ -219,12 +236,13 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     } else
       throw new NoSuchElementException("no element to remove from heap")
 
-  def dequeueAll[A1 >: A]: Seq[A1] = {
-    val b = new ArrayBuffer[A1](size)
+  def dequeueAll[A1 >: A]: immutable.Seq[A1] = {
+    val b = ArrayBuilder.make[Any]
+    b.sizeHint(size)
     while (nonEmpty) {
       b += dequeue()
     }
-    b
+    immutable.ArraySeq.unsafeWrapArray(b.result()).asInstanceOf[immutable.ArraySeq[A1]]
   }
 
   /** Returns the element with the highest priority in the queue,
@@ -237,7 +255,10 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
   /** Removes all elements from the queue. After this operation is completed,
     *  the queue will be empty.
     */
-  def clear(): Unit = { resarr.p_size0 = 1 }
+  def clear(): Unit = {
+    resarr.clear()
+    resarr.p_size0 = 1
+  }
 
   /** Returns an iterator which yields all the elements.
     *
@@ -247,15 +268,7 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     *
     *  @return  an iterator over all the elements.
     */
-  override def iterator: Iterator[A] = new AbstractIterator[A] {
-    private var i = 1
-    def hasNext: Boolean = i < resarr.p_size0
-    def next(): A = {
-      val n = resarr.p_array(i)
-      i += 1
-      toA(n)
-    }
-  }
+  override def iterator: Iterator[A] = resarr.iterator.drop(1)
 
   /** Returns the reverse of this priority queue. The new priority queue has
     *  the same elements as the original, but the opposite ordering.
@@ -268,7 +281,7 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     *
     *  @return   the reversed priority queue.
     */
-  def reverse = {
+  def reverse: PriorityQueue[A] = {
     val revq = new PriorityQueue[A]()(ord.reverse)
     // copy the existing data into the new array backwards
     // this won't put it exactly into the correct order,
@@ -293,7 +306,7 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     *  @return  an iterator over all elements sorted in descending order.
     */
   def reverseIterator: Iterator[A] = new AbstractIterator[A] {
-    private var i = resarr.p_size0 - 1
+    private[this] var i = resarr.p_size0 - 1
     def hasNext: Boolean = i >= 1
     def next(): A = {
       val n = resarr.p_array(i)
@@ -335,10 +348,26 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     pq
   }
 
-  override protected[this] def writeReplace(): AnyRef = new DefaultSerializationProxy(PriorityQueue.evidenceIterableFactory[A], this)
+  override def copyToArray[B >: A](xs: Array[B], start: Int): Int = copyToArray(xs, start, length)
+
+  override def copyToArray[B >: A](xs: Array[B], start: Int, len: Int): Int = {
+    val copied = IterableOnce.elemsToCopyToArray(length, xs.length, start, len)
+    if (copied > 0) {
+      Array.copy(resarr.p_array, 1, xs, start, copied)
+    }
+    copied
+  }
+
+  @deprecated("Use `PriorityQueue` instead", "2.13.0")
+  def orderedCompanion: PriorityQueue.type = PriorityQueue
+
+  protected[this] def writeReplace(): AnyRef = new DefaultSerializationProxy(PriorityQueue.evidenceIterableFactory[A], this)
+
+  override protected[this] def className = "PriorityQueue"
 }
 
 
+@SerialVersionUID(3L)
 object PriorityQueue extends SortedIterableFactory[PriorityQueue] {
   def newBuilder[A : Ordering]: Builder[A, PriorityQueue[A]] = {
     new Builder[A, PriorityQueue[A]] {

@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc
@@ -8,7 +15,7 @@ package typechecker
 
 import scala.reflect.internal.util.StatisticsStatics
 
-/** The main attribution phase.
+/** Defines the sub-components for the namer, packageobjects, and typer phases.
  */
 trait Analyzer extends AnyRef
             with Contexts
@@ -81,8 +88,10 @@ trait Analyzer extends AnyRef
     val phaseName = "typer"
     val runsAfter = List[String]()
     val runsRightAfter = Some("packageobjects")
-    def newPhase(_prev: Phase): StdPhase = new StdPhase(_prev) {
+    def newPhase(prev: Phase): StdPhase = new TyperPhase(prev)
+    final class TyperPhase(prev: Phase) extends StdPhase(prev) {
       override def keepsTypeParams = false
+      override def shouldSkipThisPhaseForJava: Boolean = !(settings.YpickleJava || createJavadoc)
       resetTyper()
       // the log accumulates entries over time, even though it should not (Adriaan, Martin said so).
       // Lacking a better fix, we clear it here (before the phase is created, meaning for each
@@ -91,24 +100,28 @@ trait Analyzer extends AnyRef
       override def run(): Unit = {
         val start = if (StatisticsStatics.areSomeColdStatsEnabled) statistics.startTimer(statistics.typerNanos) else null
         global.echoPhaseSummary(this)
-        for (unit <- currentRun.units) {
-          applyPhase(unit)
+        val units = currentRun.units
+        while (units.hasNext) {
+          applyPhase(units.next())
           undoLog.clear()
         }
+        finishComputeParamAlias()
         // defensive measure in case the bookkeeping in deferred macro expansion is buggy
         clearDelayed()
         if (StatisticsStatics.areSomeColdStatsEnabled) statistics.stopTimer(statistics.typerNanos, start)
+        runReporting.reportSuspendedMessages()
       }
       def apply(unit: CompilationUnit): Unit = {
         try {
           val typer = newTyper(rootContext(unit))
           unit.body = typer.typed(unit.body)
-          if (global.settings.Yrangepos && !global.reporter.hasErrors) global.validatePositions(unit.body)
-          for (workItem <- unit.toCheck) workItem()
-          if (settings.warnUnusedImport)
-            warnUnusedImports(unit)
-          if (settings.warnUnused.isSetByUser)
-            new checkUnused(typer).apply(unit)
+          if (!settings.Youtline) {
+            for (workItem <- unit.toCheck) workItem()
+            if (settings.warnUnusedImport)
+              warnUnusedImports(unit)
+            if (settings.warnUnused.isSetByUser)
+              new checkUnused(typer).apply(unit)
+          }
         }
         finally {
           unit.toCheck.clear()

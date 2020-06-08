@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc
@@ -8,8 +15,9 @@ package transform
 
 import symtab._
 import Flags._
+import scala.annotation.tailrec
 import scala.collection.mutable
-import scala.collection.mutable.{ LinkedHashMap, LinkedHashSet, TreeSet }
+import scala.collection.mutable.{LinkedHashMap, LinkedHashSet}
 
 abstract class LambdaLift extends InfoTransform {
   import global._
@@ -50,7 +58,7 @@ abstract class LambdaLift extends InfoTransform {
 
   class LambdaLifter(unit: CompilationUnit) extends explicitOuter.OuterPathTransformer(unit) {
 
-    private type SymSet = TreeSet[Symbol]
+    private type SymSet = LinkedHashSet[Symbol]
 
     /** A map storing free variables of functions and classes */
     private val free = new LinkedHashMap[Symbol, SymSet]
@@ -64,8 +72,7 @@ abstract class LambdaLift extends InfoTransform {
     /** Symbols that are called from an inner class. */
     private val calledFromInner = new LinkedHashSet[Symbol]
 
-    private val ord = Ordering.fromLessThan[Symbol](_ isLess _)
-    private def newSymSet = TreeSet.empty[Symbol](ord)
+    private def newSymSet: LinkedHashSet[Symbol] = new LinkedHashSet[Symbol]
 
     private def symSet(f: LinkedHashMap[Symbol, SymSet], sym: Symbol): SymSet =
       f.getOrElseUpdate(sym, newSymSet)
@@ -116,6 +123,7 @@ abstract class LambdaLift extends InfoTransform {
      * `logicallyEnclosingMember` in this case to return a temporary symbol corresponding to that
      * method.
      */
+    @tailrec
     private def logicallyEnclosingMember(sym: Symbol): Symbol = {
       if (sym.isLocalDummy) {
         val enclClass = sym.enclClass
@@ -172,7 +180,8 @@ abstract class LambdaLift extends InfoTransform {
             renamable += sym
             changedFreeVars = true
             debuglog(s"$sym is free in $enclosure")
-            if (sym.isVariable) sym setFlag CAPTURED
+            if (sym.isVariable && !sym.hasStableFlag) // write-once synthetic case vars are marked STABLE
+              sym setFlag CAPTURED
           }
           !enclosure.isClass
         }
@@ -205,7 +214,7 @@ abstract class LambdaLift extends InfoTransform {
             }
           case Ident(name) =>
             if (sym == NoSymbol) {
-              assert(name == nme.WILDCARD)
+              assert(name == nme.WILDCARD, name)
             } else if (sym.isLocalToBlock) {
               val owner = logicallyEnclosingMember(currentOwner)
               if (sym.isTerm && !sym.isMethod) markFree(sym, owner)
@@ -254,9 +263,9 @@ abstract class LambdaLift extends InfoTransform {
 
         val join = nme.NAME_JOIN_STRING
         if (sym.isAnonymousFunction && sym.owner.isMethod) {
-          freshen(sym.name + join + nme.ensureNonAnon(sym.owner.name.toString) + join)
+          freshen("" + sym.name + join + nme.ensureNonAnon(sym.owner.name.toString) + join)
         } else {
-          val name = freshen(sym.name + join)
+          val name = freshen(s"${sym.name}${join}")
           // scala/bug#5652 If the lifted symbol is accessed from an inner class, it will be made public. (where?)
           //         Generating a unique name, mangled with the enclosing full class name (including
           //         package - subclass might have the same name), avoids a VerifyError in the case
@@ -508,7 +517,7 @@ abstract class LambdaLift extends InfoTransform {
         case Assign(Apply(TypeApply(sel @ Select(qual, _), _), List()), rhs) =>
           // eliminate casts introduced by selecting a captured variable field
           // on the lhs of an assignment.
-          assert(sel.symbol == Object_asInstanceOf)
+          assert(sel.symbol == Object_asInstanceOf, "asInstanceOf")
           treeCopy.Assign(tree, qual, rhs)
         case Ident(name) =>
           val tree1 =
@@ -527,7 +536,7 @@ abstract class LambdaLift extends InfoTransform {
             }
           else tree1
         case Block(stats, expr0) =>
-          val (lzyVals, rest) = stats partition {
+          val (lzyVals, rest) = partitionConserve(stats) {
             case stat: ValDef => stat.symbol.isLazy || stat.symbol.isModuleVar
             case _            => false
           }
@@ -554,7 +563,7 @@ abstract class LambdaLift extends InfoTransform {
       def addLifted(stat: Tree): Tree = stat match {
         case ClassDef(_, _, _, _) =>
           val lifted = liftedDefs remove stat.symbol match {
-            case Some(xs) => xs reverseMap addLifted
+            case Some(xs) => xs.reverseIterator.map(addLifted).toList
             case _        => log("unexpectedly no lifted defs for " + stat.symbol) ; Nil
           }
           deriveClassDef(stat)(impl => deriveTemplate(impl)(_ ::: lifted))

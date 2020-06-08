@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.reflect
 package quasiquotes
 
@@ -5,7 +17,7 @@ import scala.reflect.internal.Flags._
 import scala.reflect.macros.TypecheckException
 
 class Rank private[Rank](val value: Int) extends AnyVal {
-  def pred = { assert(value - 1 >= 0); new Rank(value - 1) }
+  def pred = { assert(value - 1 >= 0, "Rank must be positive"); new Rank(value - 1) }
   def succ = new Rank(value + 1)
   override def toString = if (value == 0) "no dots" else "." * (value + 1)
 }
@@ -234,7 +246,7 @@ trait Holes { self: Quasiquotes =>
           case DotDotDot => nme.UnliftListOfListsElementwise
         }
         val lifter = inferUnliftable(tpe)
-        assert(helperName.isTermName)
+        assert(helperName.isTermName, "Must be a term")
         // q"val $name: $u.internal.reificationSupport.${helperName.toTypeName} = $u.internal.reificationSupport.$helperName($lifter)"
         ValDef(NoMods, name,
           AppliedTypeTree(Select(Select(Select(u, nme.internal), nme.reificationSupport), helperName.toTypeName), List(TypeTree(tpe))),

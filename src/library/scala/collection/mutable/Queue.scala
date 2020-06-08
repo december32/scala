@@ -1,22 +1,23 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2003-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala.collection
 package mutable
 
+import scala.collection.generic.DefaultSerializable
+
 
 /** `Queue` objects implement data structures that allow to
   *  insert and retrieve elements in a first-in-first-out (FIFO) manner.
-  *
-  *  @author  Pathikrit Bhowmick
-  *
-  *  @version 2.13
-  *  @since   2.13
   *
   *  @define Coll `mutable.Queue`
   *  @define coll mutable queue
@@ -29,12 +30,17 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
   extends ArrayDeque[A](array, start, end)
     with IndexedSeqOps[A, Queue, Queue[A]]
     with StrictOptimizedSeqOps[A, Queue, Queue[A]]
-    with Cloneable[Queue[A]] {
+    with IterableFactoryDefaults[A, Queue]
+    with ArrayDequeOps[A, Queue, Queue[A]]
+    with Cloneable[Queue[A]]
+    with DefaultSerializable {
 
   def this(initialSize: Int = ArrayDeque.DefaultInitialSize) =
     this(ArrayDeque.alloc(initialSize), start = 0, end = 0)
 
   override def iterableFactory: SeqFactory[Queue] = Queue
+
+  override protected[this] def stringPrefix = "Queue"
 
   /**
     * Add elements to the end of this queue
@@ -61,10 +67,10 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
   def enqueueAll(elems: scala.collection.IterableOnce[A]): this.type = this ++= elems
 
   /**
-    * Removes the from element from this queue and return it
+    * Removes the first element from this queue and returns it
     *
     * @return
-    * @throws java.util.NoSuchElementException when queue is empty
+    * @throws NoSuchElementException when queue is empty
     */
   def dequeue(): A = removeHead()
 
@@ -75,41 +81,25 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
     *  @return the first element of the queue for which p yields true
     */
   def dequeueFirst(p: A => Boolean): Option[A] =
-    if (isEmpty) None
-    else if (p(head)) {
-      val res = Some(head)
-      removeHead()
-      res
-    } else {
-      val i = indexWhere(p)
-      if (i < 0) None
-      else Some(remove(i))
-    }
+    removeFirst(p)
 
-   /** Returns all elements in the queue which satisfy the
-   *  given predicate, and removes those elements from the queue.
-   *
-   *  @param p   the predicate used for choosing elements
-   *  @return    a sequence of all elements in the queue for which
-   *             p yields true.
-   */
-  def dequeueAll(p: A => Boolean): scala.collection.immutable.Seq[A] = {
-    val res = scala.collection.immutable.Seq.newBuilder[A]
-    var i, j = 0
-    while (i < size) {
-      if (p(apply(i))) {
-        res += this(i)
-      } else {
-        if (i != j) {
-          this(j) = this(i)
-        }
-        j += 1
-      }
-      i += 1
-    }
-    if (i != j) takeInPlace(j)
-    res.result()
-  }
+  /** Returns all elements in the queue which satisfy the
+    *  given predicate, and removes those elements from the queue.
+    *
+    *  @param p   the predicate used for choosing elements
+    *  @return    a sequence of all elements in the queue for which
+    *             p yields true.
+    */
+  def dequeueAll(p: A => Boolean): scala.collection.immutable.Seq[A] =
+    removeAll(p)
+
+  /**
+    * Returns and dequeues all elements from the queue which satisfy the given predicate
+    *
+    *  @param f   the predicate used for choosing elements
+    *  @return The removed elements
+    */
+  def dequeueWhile(f: A => Boolean): scala.collection.Seq[A] = removeHeadWhile(f)
 
   /** Returns the first element in the queue, or throws an error if there
     *  is no element contained in the queue.
@@ -118,7 +108,7 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
     */
   @`inline` final def front: A = head
 
-  override def clone(): Queue[A] = {
+  protected override def klone(): Queue[A] = {
     val bf = newSpecificBuilder
     bf ++= this
     bf.result()
@@ -134,6 +124,7 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
   * @define coll queue
   * @define Coll `Queue`
   */
+@SerialVersionUID(3L)
 object Queue extends StrictOptimizedSeqFactory[Queue] {
 
   def from[A](source: IterableOnce[A]): Queue[A] = empty ++= source

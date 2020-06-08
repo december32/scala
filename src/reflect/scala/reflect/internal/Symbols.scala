@@ -1,6 +1,17 @@
- /* NSC -- new Scala compiler
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
+/* NSC -- new Scala compiler
  * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
  */
 
 package scala
@@ -12,7 +23,7 @@ import scala.collection.mutable.ListBuffer
 import util.{ Statistics, shortClassOfInstance, StatisticsStatics }
 import Flags._
 import scala.annotation.tailrec
-import scala.reflect.io.{ AbstractFile, NoAbstractFile }
+import scala.reflect.io.{AbstractFile, NoAbstractFile}
 import Variance._
 
 trait Symbols extends api.Symbols { self: SymbolTable =>
@@ -24,24 +35,18 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
   protected def nextId() = { ids += 1; ids }
 
-  /** Used for deciding in the IDE whether we can interrupt the compiler */
-  //protected var activeLocks = 0
-
-  /** Used for debugging only */
-  //protected var lockedSyms = scala.collection.immutable.Set[Symbol]()
-
   /** Used to keep track of the recursion depth on locked symbols */
-  private var _recursionTable = immutable.Map.empty[Symbol, Int]
+  private[this] var _recursionTable = immutable.Map.empty[Symbol, Int]
   def recursionTable = _recursionTable
   def recursionTable_=(value: immutable.Map[Symbol, Int]) = _recursionTable = value
 
-  private var _lockedCount = 0
+  private[this] var _lockedCount = 0
   def lockedCount = this._lockedCount
   def lockedCount_=(i: Int) = _lockedCount = i
 
 
   @deprecated("Global existential IDs no longer used", "2.12.1")
-  private var existentialIds = 0
+  private[this] var existentialIds = 0
   @deprecated("Global existential IDs no longer used", "2.12.1")
   protected def nextExistentialId() = { existentialIds += 1; existentialIds }
   @deprecated("Use overload that accepts an id", "2.12.1")
@@ -70,7 +75,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
    * The original owner of a symbol is needed in some places in the backend. Ideally, owners should
    * be versioned like the type history.
    */
-  private val originalOwnerMap = perRunCaches.newAnyRefMap[Symbol, Symbol]()
+  private[this] val originalOwnerMap = perRunCaches.newAnyRefMap[Symbol, Symbol]()
 
   // TODO - don't allow the owner to be changed without checking invariants, at least
   // when under some flag. Define per-phase invariants for owner/owned relationships,
@@ -118,6 +123,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     def isJavaEnum: Boolean = hasJavaEnumFlag
     def isJavaAnnotation: Boolean = hasJavaAnnotationFlag
+    def isStaticAnnotation: Boolean =
+      hasJavaAnnotationFlag || isNonBottomSubClass(StaticAnnotationClass)
 
     def newNestedSymbol(name: Name, pos: Position, newFlags: Long, isClass: Boolean): Symbol = name match {
       case n: TermName => newTermSymbol(n, pos, newFlags)
@@ -216,6 +223,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
              with HasFlags
              with Annotatable[Symbol]
              with Attachable {
+    protected[this] final var _rawname = initName
     // makes sure that all symbols that runtime reflection deals with are synchronized
     private def isSynchronized = this.isInstanceOf[scala.reflect.runtime.SynchronizedSymbols#SynchronizedSymbol]
     private def isAprioriThreadsafe = isThreadsafe(AllOps)
@@ -230,16 +238,15 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     // Rename as little as possible.  Enforce invariants on all renames.
     type TypeOfClonedSymbol >: Null <: Symbol { type NameType = Symbol.this.NameType }
 
-    // Abstract here so TypeSymbol and TermSymbol can have a private[this] field
-    // with the proper specific type.
-    def rawname: NameType
-    def name: NameType
+    final def rawname: NameType = _rawname.asInstanceOf[NameType]
+    final def name: NameType = if (needsFlatClasses) flattenedName else _rawname.asInstanceOf[NameType]
     def name_=(n: Name): Unit = {
       if (shouldLogAtThisPhase) {
         def msg = s"In $owner, renaming $name -> $n"
         if (isSpecialized) debuglog(msg) else log(msg)
       }
     }
+    protected[this] def flattenedName: NameType = rawname
     def asNameType(n: Name): NameType
 
     // Syncnote: need not be protected, as only assignment happens in owner_=, which is not exposed to api
@@ -248,12 +255,12 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     private[this] var _rawowner = if (initOwner eq null) this else initOwner
     private[this] var _rawflags: Long = _
 
-    def rawowner = _rawowner
-    def rawflags = _rawflags
+    final def rawowner = _rawowner
+    final def rawflags = _rawflags
 
     rawatt = initPos
 
-    val id = nextId() // identity displayed when -uniqid
+    final val id = nextId() // identity displayed when -uniqid
     //assert(id != 3390, initName)
 
     private[this] var _validTo: Period = NoPeriod
@@ -262,12 +269,12 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       traceSymbols.recordNewSymbol(this)
 
     def validTo = _validTo
-    def validTo_=(x: Period) { _validTo = x}
+    def validTo_=(x: Period): Unit = { _validTo = x}
 
     def setName(name: Name): this.type = { this.name = asNameType(name) ; this }
 
     // Update the surrounding scopes
-    protected[this] def changeNameInOwners(name: Name) {
+    protected[this] def changeNameInOwners(name: Name): Unit = {
       if (owner.isClass) {
         var ifs = owner.infos
         while (ifs != null) {
@@ -393,10 +400,11 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *
      *    pre.memberType(m)
      */
-    final def newOverloaded(pre: Type, alternatives: List[Symbol]): TermSymbol = (
-      newTermSymbol(alternatives.head.name.toTermName, alternatives.head.pos, OVERLOADED)
-        setInfo OverloadedType(pre, alternatives)
-    )
+    final def newOverloaded(pre: Type, alternatives: List[Symbol]): TermSymbol = {
+      val triedCookingFlag = if (alternatives.forall(_.hasFlag(TRIEDCOOKING))) TRIEDCOOKING else 0L
+
+      newTermSymbol(alternatives.head.name.toTermName, alternatives.head.pos, OVERLOADED | triedCookingFlag) setInfo OverloadedType(pre, alternatives)
+    }
 
     final def newErrorValue(name: TermName): TermSymbol =
       newTermSymbol(name, pos, SYNTHETIC | IS_ERROR) setInfo ErrorType
@@ -575,16 +583,12 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       } else {
         _rawflags |= LOCKED
         true
-//        activeLocks += 1
-//        lockedSyms += this
       }
     }
 
     // Unlock a symbol
     private[scala] def unlock() = {
       if ((_rawflags & LOCKED) != 0L) {
-//        activeLocks -= 1
-//        lockedSyms -= this
         _rawflags &= ~LOCKED
         if (settings.Yrecursion.value != 0)
           recursionTable -= this
@@ -684,6 +688,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  to be the case if it is final, and any type parameters are invariant.
      */
     def hasOnlyBottomSubclasses = {
+      @tailrec
       def loop(tparams: List[Symbol]): Boolean = tparams match {
         case Nil     => true
         case x :: xs => x.variance.isInvariant && loop(xs)
@@ -694,11 +699,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     final def isOverridableMember  = !(isClass || isEffectivelyFinal || isTypeParameter) && safeOwner.isClass
 
     /** Does this symbol denote a wrapper created by the repl? */
-    final def isInterpreterWrapper = (
-         (this hasFlag MODULE)
-      && isTopLevel
-      && nme.isReplWrapperName(name)
-    )
+    final def isInterpreterWrapper = isTopLevel && nme.isReplWrapperName(name)
 
     /** In our current architecture, symbols for top-level classes and modules
      *  are created as dummies. Package symbols just call newClass(name) or newModule(name) and
@@ -738,14 +739,12 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     /** Does symbol have ANY flag in `mask` set? */
     final def hasFlag(mask: Long): Boolean = getFlag(mask) != 0
 
-    def hasFlag(mask: Int): Boolean = hasFlag(mask.toLong)
-
     /** Does symbol have ALL the flags in `mask` set? */
     final def hasAllFlags(mask: Long): Boolean = getFlag(mask) == mask
 
     def setFlag(mask: Long): this.type   = { _rawflags |= mask ; this }
     def resetFlag(mask: Long): this.type = { _rawflags &= ~mask ; this }
-    def resetFlags() { rawflags = 0L }
+    def resetFlags(): Unit               = { rawflags = 0 }
 
     /** Default implementation calls the generic string function, which
      *  will print overloaded flags as <flag1/flag2/flag3>.  Subclasses
@@ -763,11 +762,16 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     }
 
     final def flags: Long = {
-      val fs = _rawflags & phase.flagMask
+      flags(phase.flagMask)
+    }
+
+    private[reflect] final def flags(phaseFlagMask: Long): Long = {
+      val fs = _rawflags & phaseFlagMask
       (fs | ((fs & LateFlags) >>> LateShift)) & ~((fs & AntiFlags) >>> AntiShift)
     }
+
     def flags_=(fs: Long) = _rawflags = fs
-    def rawflags_=(x: Long) { _rawflags = x }
+    def rawflags_=(x: Long): Unit = { _rawflags = x }
 
     final def hasGetter = isTerm && nme.isLocalName(name)
 
@@ -828,7 +832,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     final def isDelambdafyFunction = isSynthetic && (name containsName tpnme.DELAMBDAFY_LAMBDA_CLASS_NAME)
     final def isDelambdafyTarget  = isArtifact && isMethod && hasAttachment[DelambdafyTarget.type]
     final def isDefinedInPackage  = effectiveOwner.isPackageClass
-    final def needsFlatClasses    = phase.flatClasses && rawowner != NoSymbol && !rawowner.isPackageClass
+    final def needsFlatClasses    = phase.flatClasses && (rawowner ne NoSymbol) && !rawowner.isPackageClass && !isMethod
 
     // TODO introduce a flag for these?
     final def isPatternTypeVariable: Boolean =
@@ -838,7 +842,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  Do the same for any accessed symbols or setters/getters.
      *  Implementation in TermSymbol.
      */
-    def expandName(base: Symbol) { }
+    def expandName(base: Symbol): Unit = { }
 
     // In java.lang, Predef, or scala package/package object
     def isInDefaultNamespace = UnqualifiedOwners(effectiveOwner)
@@ -852,7 +856,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     def skipPackageObject: Symbol = this
 
     /** The package object symbol corresponding to this package or package class symbol, or NoSymbol otherwise */
-    def packageObject: Symbol =
+    @tailrec
+    final def packageObject: Symbol =
       if (isPackageClass) tpe.packageObject
       else if (hasPackageFlag) moduleClass.packageObject
       else NoSymbol
@@ -862,7 +867,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     final def skipConstructor: Symbol = if (isConstructor) owner else this
 
     /** Conditions where we omit the prefix when printing a symbol, to avoid
-     *  unpleasantries like Predef.String, $iw.$iw.Foo and <empty>.Bippy.
+     *  unpleasantries like Predef.String, $read.$iw.Foo and <empty>.Bippy.
      */
     final def isOmittablePrefix = /*!settings.debug.value &&*/ {
       // scala/bug#5941 runtime reflection can have distinct symbols representing `package scala` (from different mirrors)
@@ -874,7 +879,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     def isEmptyPrefix = (
          isEffectiveRoot                      // has no prefix for real, <empty> or <root>
       || isAnonOrRefinementClass              // has uninteresting <anon> or <refinement> prefix
-      || nme.isReplWrapperName(name)          // has ugly $iw. prefix (doesn't call isInterpreterWrapper due to nesting)
+      || nme.isReplWrapperName(name)          // $read.$iw.Foo or $read.INSTANCE.$iw.Foo
     )
     def isFBounded = info match {
       case TypeBounds(_, _) => info.baseTypeSeq exists (_ contains this)
@@ -893,12 +898,13 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         )
       }
 
-    def isStrictFP             = hasAnnotation(ScalaStrictFPAttr) || (enclClass hasAnnotation ScalaStrictFPAttr)
-    def isSerializable         = info.baseClasses.exists(p => p == SerializableClass || p == JavaSerializableClass)
-    def isDeprecated           = hasAnnotation(DeprecatedAttr)
+    @tailrec
+    final def isStrictFP: Boolean    = this != NoSymbol && !isDeferred && (hasAnnotation(ScalaStrictFPAttr) || originalOwner.isStrictFP)
+    def isSerializable         = info.baseClasses.exists(_ == SerializableClass)
+    def isDeprecated           = hasAnnotation(DeprecatedAttr) || (isJava && hasAnnotation(JavaDeprecatedAttr))
     def deprecationMessage     = getAnnotation(DeprecatedAttr) flatMap (_ stringArg 0)
     def deprecationVersion     = getAnnotation(DeprecatedAttr) flatMap (_ stringArg 1)
-    def deprecatedParamName    = getAnnotation(DeprecatedNameAttr) flatMap (_ symbolArg 0 orElse Some(nme.NO_NAME))
+    def deprecatedParamName    = getAnnotation(DeprecatedNameAttr) flatMap (ann => ann.symbolArg(0).orElse(ann.stringArg(0).map(newTermName)).orElse(Some(nme.NO_NAME)))
     def deprecatedParamVersion = getAnnotation(DeprecatedNameAttr) flatMap (_ stringArg 1)
     def hasDeprecatedInheritanceAnnotation
                                = hasAnnotation(DeprecatedInheritanceAttr)
@@ -923,7 +929,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     def migrationMessage     = getAnnotation(MigrationAnnotationClass) flatMap { _.stringArg(0) }
     def migrationVersion     = getAnnotation(MigrationAnnotationClass) flatMap { _.stringArg(1) }
     def elisionLevel         = getAnnotation(ElidableMethodClass) flatMap { _.intArg(0) }
-    def implicitNotFoundMsg  = getAnnotation(ImplicitNotFoundClass) flatMap { _.stringArg(0) }
+    def implicitNotFoundMsg  = getAnnotation(ImplicitNotFoundClass).flatMap(_.stringArg(0))
     def implicitAmbiguousMsg = getAnnotation(ImplicitAmbiguousClass) flatMap { _.stringArg(0) }
 
     def isCompileTimeOnly       = hasAnnotation(CompileTimeOnlyAttr)
@@ -1014,7 +1020,9 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
          ((this hasFlag FINAL | PACKAGE) && this != SingletonClass)
       || isModuleOrModuleClass
       || isTerm && (isPrivate || isLocalToBlock || (hasAllFlags(notPRIVATE | METHOD) && !hasFlag(DEFERRED)))
-      || isClass && originalOwner.isTerm && children.isEmpty // we track known subclasses of term-owned classes, use that infer finality
+      // We track known subclasses of term-owned classes, use that to infer finality.
+      // However, don't look at owner for refinement classes (it's basically arbitrary).
+      || isClass && !isRefinementClass && originalOwner.isTerm && children.isEmpty
     )
     /** Is this symbol effectively final or a concrete term member of sealed class whose children do not override it */
     final def isEffectivelyFinalOrNotOverridden: Boolean = isEffectivelyFinal || (isTerm && !isDeferred && isNotOverridden)
@@ -1022,6 +1030,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     /** Is this symbol owned by a package? */
     final def isTopLevel = owner.isPackageClass
 
+    // shim for sbt's compiler interface
     /** Is this symbol defined in a block? */
     @deprecated("use isLocalToBlock instead", "2.11.0")
     final def isLocal: Boolean = owner.isTerm
@@ -1074,6 +1083,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  (2) it is abstract override and its super symbol in `base` is
      *      nonexistent or incomplete.
      */
+    @tailrec
     final def isIncompleteIn(base: Symbol): Boolean =
       this.isDeferred ||
       (this hasFlag ABSOVERRIDE) && {
@@ -1086,7 +1096,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         case sl: SymLoader => sl.fromSource
         case _             => false
       }
-      def warnIfSourceLoader() {
+      def warnIfSourceLoader(): Unit = {
         if (isSourceLoader)
           // Predef is completed early due to its autoimport; we used to get here when type checking its
           // parent LowPriorityImplicits. See comment in c5441dc for more elaboration.
@@ -1120,13 +1130,13 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     /** Can this symbol be loaded by a reflective mirror?
      *
-     *  Scalac relies on `ScalaSignature' annotation to retain symbols across compilation runs.
+     *  Scalac relies on `ScalaSignature` annotation to retain symbols across compilation runs.
      *  Such annotations (also called "pickles") are applied on top-level classes and include information
      *  about all symbols reachable from the annotee. However, local symbols (e.g. classes or definitions local to a block)
      *  are typically unreachable and information about them gets lost.
      *
      *  This method is useful for macro writers who wish to save certain ASTs to be used at runtime.
-     *  With `isLocatable' it's possible to check whether a tree can be retained as is, or it needs special treatment.
+     *  With `isLocatable` it's possible to check whether a tree can be retained as is, or it needs special treatment.
      */
     final def isLocatable: Boolean = {
       if (this == NoSymbol) return false
@@ -1208,7 +1218,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     // when under some flag. Define per-phase invariants for owner/owned relationships,
     // e.g. after flatten all classes are owned by package classes, there are lots and
     // lots of these to be declared (or more realistically, discovered.)
-    def owner_=(owner: Symbol) {
+    def owner_=(owner: Symbol): Unit = {
       saveOriginalOwner(this)
       assert(isCompilerUniverse, "owner_= is not thread-safe; cannot be run in reflexive code")
       if (traceSymbolActivity)
@@ -1221,10 +1231,10 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     // Non-classes skip self and return rest of owner chain; overridden in ClassSymbol.
     def enclClassChain: List[Symbol] = owner.enclClassChain
 
-    def ownersIterator: Iterator[Symbol] = new Iterator[Symbol] {
-      private var current = Symbol.this
+    def ownersIterator: Iterator[Symbol] = new collection.AbstractIterator[Symbol] {
+      private[this] var current = Symbol.this
       def hasNext = current ne NoSymbol
-      def next = { val r = current; current = current.owner; r }
+      def next() = { val r = current; current = current.owner; r }
     }
 
     /** Same as `ownerChain contains sym` but more efficient, and
@@ -1295,11 +1305,11 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         if (sym.isRoot || sym.isRootPackage || sym == NoSymbol || sym.owner.isEffectiveRoot) {
           val capacity = size + nSize
           b = new java.lang.StringBuffer(capacity)
-          b.append(chrs, symName.start, nSize)
+          symName.appendTo(b, 0, nSize)
         } else {
           loop(size + nSize + 1, sym.effectiveOwner.enclClass)
           b.append(separator)
-          b.append(chrs, symName.start, nSize)
+          symName.appendTo(b, 0, nSize)
         }
       }
       loop(suffix.length(), this)
@@ -1422,7 +1432,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     def privateWithin = {
       _privateWithin
     }
-    def privateWithin_=(sym: Symbol) { _privateWithin = sym }
+    def privateWithin_=(sym: Symbol): Unit = { _privateWithin = sym }
     def setPrivateWithin(sym: Symbol): this.type = { privateWithin_=(sym) ; this }
 
     /** Does symbol have a private or protected qualifier set? */
@@ -1502,25 +1512,34 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     /** Get type info associated with symbol at current phase, after
      *  ensuring that symbol is initialized (i.e. type is completed).
      */
-    def info: Type = try {
+    def info: Type = {
       var cnt = 0
-      while (validTo == NoPeriod) {
-        assert(infos ne null, this.name)
-        assert(infos.prev eq null, this.name)
-        val tp = infos.info
+      while (_validTo == NoPeriod) {
+        completeInfo()
+        cnt += 1
+        // allow for two completions:
+        //   one: sourceCompleter to LazyType, two: LazyType to completed type
+        def abortNoProgress() = abort(s"no progress in completing $this: ${infos.info}")
+        if (cnt == 3) abortNoProgress()
+      }
+      rawInfo
+    }
 
-        if ((_rawflags & LOCKED) != 0L) { // rolled out once for performance
-          lock {
-            setInfo(ErrorType)
-            throw CyclicReference(this, tp)
-          }
-        } else {
-          _rawflags |= LOCKED
-          // TODO another commented out lines - this should be solved in one way or another
-//          activeLocks += 1
- //         lockedSyms += this
+    private def completeInfo(): Unit = try {
+      assert(infos ne null, this.name)
+      assert(infos.prev eq null, this.name)
+      val tp = infos.info
+
+      if ((_rawflags & LOCKED) != 0L) { // rolled out once for performance
+        lock {
+          setInfo(ErrorType)
+          throw CyclicReference(this, tp)
         }
-        val current = phase
+      } else {
+        _rawflags |= LOCKED
+      }
+      val current = phase
+      if (isCompilerUniverse) {
         try {
           assertCorrectThread()
           phase = phaseOf(infos.validFrom)
@@ -1529,22 +1548,27 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
           unlock()
           phase = current
         }
-        cnt += 1
-        // allow for two completions:
-        //   one: sourceCompleter to LazyType, two: LazyType to completed type
-        if (cnt == 3) abort(s"no progress in completing $this: $tp")
+      } else {
+          // In runtime reflection, there is only on phase, so don't mutate Global.phase which would lead to warnings
+        // of data races from when using TSAN to assess thread safety.
+        try {
+          tp.complete(this)
+        } finally {
+          unlock()
+        }
       }
-      rawInfo
-    }
-    catch {
+    } catch {
       case ex: CyclicReference =>
         devWarning("... hit cycle trying to complete " + this.fullLocationString)
         throw ex
     }
 
-    def info_=(info: Type) {
-      assert(info ne null)
-      infos = TypeHistory(currentPeriod, info, null)
+    def info_=(info: Type): Unit = {
+      assert(info ne null, "Can't assign a null type")
+      if (infos ne null) {
+        infos.reset(currentPeriod, info)
+      } else
+        infos = TypeHistory(currentPeriod, info, null)
       unlock()
       _validTo = if (info.isComplete) currentPeriod else NoPeriod
     }
@@ -1592,83 +1616,91 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     /** Return info without checking for initialization or completing */
     def rawInfo: Type = {
-      var infos = this.infos
-      assert(infos != null)
-      val curPeriod = currentPeriod
-      val curPid = phaseId(curPeriod)
+      // OPT: hoisting the outer reference reduces the bytecode size of this method a little which makes it more
+      //      likely to inline into hot callers of .info
+      val outer = Symbols.this
 
-      if (validTo != NoPeriod) {
+      var infos = this.infos
+      outer.assert(infos != null, "infos must not be null")
+
+      if (_validTo != NoPeriod) {
+        val curPeriod = outer.currentPeriod
+        val curPid = outer.phaseId(curPeriod)
+
         // skip any infos that concern later phases
-        while (curPid < phaseId(infos.validFrom) && infos.prev != null)
+        while (curPid < outer.phaseId(infos.validFrom) && infos.prev != null)
           infos = infos.prev
 
-        if (validTo < curPeriod) {
-          assertCorrectThread()
+        if (_validTo < curPeriod) {
           // adapt any infos that come from previous runs
-          val current = phase
+          val curPhase = outer.phase
           try {
-            infos = adaptInfos(infos)
+            if (infos != null && outer.runId(infos.validFrom) != outer.currentRunId) {
+              // scala/bug#8871 Discard all but the first element of type history. Specialization only works in the resident
+              // compiler / REPL if re-run its info transformer in this run to correctly populate its
+              // per-run caches, e.g. typeEnv
+              adaptInfo(infos.oldest)
+              infos = this.infos
+            }
 
             //assert(runId(validTo) == currentRunId, name)
             //assert(runId(infos.validFrom) == currentRunId, name)
 
-            if (validTo < curPeriod) {
-              var itr = infoTransformers.nextFrom(phaseId(validTo))
-              infoTransformers = itr; // caching optimization
-              while (itr.pid != NoPhase.id && itr.pid < current.id) {
-                phase = phaseWithId(itr.pid)
-                val info1 = itr.transform(this, infos.info)
-                if (info1 ne infos.info) {
-                  infos = TypeHistory(currentPeriod + 1, info1, infos)
-                  this.infos = infos
-                }
-                _validTo = currentPeriod + 1 // to enable reads from same symbol during info-transform
-                itr = itr.next
-              }
-              _validTo = if (itr.pid == NoPhase.id) curPeriod
-                         else period(currentRunId, itr.pid)
+            if (_validTo < curPeriod) {
+              infos = transformInfos(infos, curPhase, curPeriod)
             }
           } finally {
-            phase = current
+            outer.phase = curPhase
           }
         }
       }
       infos.info
     }
 
-    // adapt to new run in fsc.
-    private def adaptInfos(infos: TypeHistory): TypeHistory = {
-      assert(isCompilerUniverse)
-      if (infos == null || runId(infos.validFrom) == currentRunId) {
-        infos
-      } else if (infos ne infos.oldest) {
-        // scala/bug#8871 Discard all but the first element of type history. Specialization only works in the resident
-        // compiler / REPL if re-run its info transformer in this run to correctly populate its
-        // per-run caches, e.g. typeEnv
-        adaptInfos(infos.oldest)
-      } else {
-        val prev1 = adaptInfos(infos.prev)
-        if (prev1 ne infos.prev) prev1
-        else {
-          val pid = phaseId(infos.validFrom)
-
-          _validTo = period(currentRunId, pid)
-          phase   = phaseWithId(pid)
-
-          val info1 = adaptToNewRunMap(infos.info)
-          if (info1 eq infos.info) {
-            infos.validFrom = validTo
-            infos
-          } else {
-            this.infos = TypeHistory(validTo, info1, prev1)
-            this.infos
-          }
+    private def transformInfos(infos0: TypeHistory, curPhase: Phase, curPeriod: Period): TypeHistory = {
+      assertCorrectThread()
+      var infos = infos0
+      var itr = nextFrom(phaseId(_validTo))
+      infoTransformers = itr; // caching optimization
+      while (itr.pid != NoPhase.id && itr.pid < curPhase.id) {
+        phase = phaseWithId(itr.pid)
+        val info1 = itr.transform(this, infos.info)
+        if (info1 ne infos.info) {
+          infos = TypeHistory(currentPeriod + 1, info1, infos)
+          this.infos = infos
         }
+        _validTo = currentPeriod + 1 // to enable reads from same symbol during info-transform
+        itr = itr.next
+      }
+      _validTo = if (itr.pid == NoPhase.id) curPeriod
+      else period(currentRunId, itr.pid)
+      infos
+    }
+
+    // adapt to new run in fsc.
+    private def adaptInfo(oldest: TypeHistory): Unit = {
+      assert(isCompilerUniverse, "Must be compiler universe")
+      assert(oldest.prev == null, "Previous history must be null")
+      val pid = phaseId(oldest.validFrom)
+
+      _validTo = period(currentRunId, pid)
+      phase   = phaseWithId(pid)
+
+      val info1 = adaptToNewRunMap(oldest.info)
+      if (info1 eq oldest.info) {
+        oldest.validFrom = validTo
+        this.infos = oldest
+      } else {
+        if (this.infos ne null) {
+          this.infos = this.infos.reset(validTo, info1)
+        } else
+          this.infos = TypeHistory(validTo, info1, null)
       }
     }
 
+
     /** Raises a `MissingRequirementError` if this symbol is a `StubSymbol` */
-    def failIfStub() {}
+    def failIfStub(): Unit = {}
 
     /** Initialize the symbol */
     final def initialize: this.type = {
@@ -1682,7 +1714,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     /** Was symbol's type updated during given phase? */
     final def hasTypeAt(pid: Phase#Id): Boolean = {
-      assert(isCompilerUniverse)
+      assert(isCompilerUniverse, "Must be compiler universe")
       var infos = this.infos
       while ((infos ne null) && phaseId(infos.validFrom) > pid) infos = infos.prev
       infos ne null
@@ -1702,8 +1734,12 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       info  // force the current info
       if (isJavaDefined || isType && owner.isJavaDefined)
         this modifyInfo rawToExistential
-      else if (isOverloaded)
-        alternatives withFilter (_.isJavaDefined) foreach (_ modifyInfo rawToExistential)
+      else if (isOverloaded) {
+        for (alt <- alternatives) {
+          alt.setFlag(TRIEDCOOKING)
+          if (alt.isJavaDefined) alt.modifyInfo(rawToExistential)
+        }
+      }
 
       this
     }
@@ -1788,9 +1824,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         }
         val oldsyms = oldsymbuf.toList
         val newsyms = newsymbuf.toList
-        for (sym <- newsyms) {
-          addMember(thistp, tp, sym modifyInfo (_ substThisAndSym(this, thistp, oldsyms, newsyms)))
-        }
+        for (sym <- newsyms)
+          addMember(thistp, tp, sym.modifyInfo(_.substThisAndSym(this, thistp, oldsyms, newsyms)))
       }
       tp
     }
@@ -1812,10 +1847,10 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     }
 
     /**
-     * Adds the interface scala.Serializable to the parents of a ClassInfoType.
+     * Adds the interface java.io.Serializable to the parents of a ClassInfoType.
      * Note that the tree also has to be updated accordingly.
      */
-    def makeSerializable() {
+    def makeSerializable(): Unit = {
       info match {
         case ci @ ClassInfoType(_, _, _) =>
           setInfo(ci.copy(parents = ci.parents :+ SerializableTpe))
@@ -1826,9 +1861,9 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
 // ----- setters implemented in selected subclasses -------------------------------------
 
-    def typeOfThis_=(tp: Type)       { throw new UnsupportedOperationException("typeOfThis_= inapplicable for " + this) }
-    def sourceModule_=(sym: Symbol)  { throw new UnsupportedOperationException("sourceModule_= inapplicable for " + this) }
-    def addChild(sym: Symbol)        { throw new UnsupportedOperationException("addChild inapplicable for " + this) }
+    def typeOfThis_=(tp: Type): Unit =       { throw new UnsupportedOperationException("typeOfThis_= inapplicable for " + this) }
+    def sourceModule_=(sym: Symbol): Unit =  { throw new UnsupportedOperationException("sourceModule_= inapplicable for " + this) }
+    def addChild(sym: Symbol): Unit =        { throw new UnsupportedOperationException("addChild inapplicable for " + this) }
 
 // ----- annotations ------------------------------------------------------------
 
@@ -1851,6 +1886,9 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     def withAnnotations(annots: List[AnnotationInfo]): this.type =
       setAnnotations(annots ::: annotations)
+
+    def withAnnotation(anno: AnnotationInfo): this.type =
+      setAnnotations(anno :: annotations)
 
     def withoutAnnotations: this.type =
       setAnnotations(Nil)
@@ -1905,9 +1943,9 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  inheritance graph (i.e. subclass.isLess(superclass) always holds).
      *  the ordering is given by: (_.isType, -_.baseTypeSeq.length) for type symbols, followed by `id`.
      */
-    final def isLess(that: Symbol): Boolean = {
+    final def isLess(that: Symbol): Boolean = (this ne that)  && {
       def baseTypeSeqLength(sym: Symbol) =
-        if (sym.isAbstractType) 1 + sym.info.bounds.hi.baseTypeSeq.length
+        if (sym.isAbstractType) 1 + sym.info.upperBound.baseTypeSeq.length
         else sym.info.baseTypeSeq.length
       if (this.isType)
         (that.isType &&
@@ -1921,6 +1959,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  (this isNestedIn that) holds iff this symbol is defined within
      *  a class or method defining that symbol
      */
+    @tailrec
     final def isNestedIn(that: Symbol): Boolean =
       owner == that || owner != NoSymbol && (owner isNestedIn that)
 
@@ -1963,7 +2002,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         var alts0: List[Symbol] = alternatives
         var alts1: List[Symbol] = Nil
 
-        while (alts0.nonEmpty) {
+        while (!alts0.isEmpty) {
           if (cond(alts0.head))
             alts1 ::= alts0.head
           else
@@ -2004,7 +2043,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
           setInfo (this.info cloneInfo clone)
           setAnnotations this.annotations
       )
-      this.attachments.all.foreach(clone.updateAttachment)
+      assert(clone.attachments.isEmpty)
+      clone.setAttachments(this.attachments.cloneAttachments)
       if (clone.thisSym != clone)
         clone.typeOfThis = (clone.typeOfThis cloneInfo clone)
 
@@ -2016,6 +2056,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     /** Internal method to clone a symbol's implementation with the given flags and no info. */
     def cloneSymbolImpl(owner: Symbol, newFlags: Long): TypeOfClonedSymbol
+
+    def flipped: Symbol = this
 
 // ------ access to related symbols --------------------------------------------------
 
@@ -2042,7 +2084,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *   scala> intp("Foo2").thisSym
      *   res1: $r.intp.global.Symbol = value self
      *
-     *  Martin says: The reason `thisSym' is `this' is so that thisType can be this.thisSym.tpe.
+     *  Martin says: The reason `thisSym` is `this` is so that thisType can be this.thisSym.tpe.
      *  It's a trick to shave some cycles off.
      *
      *  Morale: DO:    if (clazz.typeOfThis.typeConstructor ne clazz.typeConstructor) ...
@@ -2079,9 +2121,11 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       // The slightly more principled approach of using the paramss of the
       // primary constructor leads to cycles in, for example, pos/t5084.scala.
       val primaryNames = constrParamAccessors map (_.name.dropLocal)
+      def nameStartsWithOrigDollar(name: Name, prefix: Name) =
+        name.startsWith(prefix) && name.length > prefix.length + 1 && name.charAt(prefix.length) == '$'
       caseFieldAccessorsUnsorted.sortBy { acc =>
         primaryNames indexWhere { orig =>
-          (acc.name == orig) || (acc.name startsWith (orig append "$"))
+          (acc.name == orig) || nameStartsWithOrigDollar(acc.name, orig)
         }
       }
     }
@@ -2114,6 +2158,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  This is the enclosing class, except for classes defined locally to constructors,
      *  where it is the outer class of the enclosing class.
      */
+    @tailrec
     final def outerClass: Symbol =
       if (this == NoSymbol) {
         // ideally we shouldn't get here, but it's better to harden against this than suffer the infinite loop in scala/bug#9133
@@ -2153,6 +2198,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     def superClass: Symbol = if (info.parents.isEmpty) NoSymbol else info.parents.head.typeSymbol
     def parentSymbols: List[Symbol] = info.parents map (_.typeSymbol)
 
+    def parentSymbolsIterator: Iterator[Symbol] = info.parents.iterator.map(_.typeSymbol)
     /** The directly or indirectly inherited mixins of this class
      *  except for mixin classes inherited by the superclass. Mixin classes appear
      *  in linearization order.
@@ -2217,20 +2263,25 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  (or, for traits: `$init`) of `C`.
      *
      */
+    @tailrec
     final def logicallyEnclosingMember: Symbol =
       if (isLocalDummy) enclClass.primaryConstructor
       else if (isMethod || isClass || this == NoSymbol) this
       else owner.logicallyEnclosingMember
 
     /** The top-level class containing this symbol, using the current owner chain. */
-    def enclosingTopLevelClass: Symbol =
-      if (isTopLevel) {
+    @tailrec
+    final def enclosingTopLevelClass: Symbol =
+      if (this eq NoSymbol) this
+      else if (isTopLevel) {
         if (isClass) this else moduleClass
       } else owner.enclosingTopLevelClass
 
     /** The top-level class or local dummy symbol containing this symbol, using the original owner chain. */
-    def originalEnclosingTopLevelClassOrDummy: Symbol =
-      if (isTopLevel) {
+    @tailrec
+    final def originalEnclosingTopLevelClassOrDummy: Symbol =
+      if (this eq NoSymbol) this
+      else if (isTopLevel) {
         if (isClass) this else moduleClass.orElse(this)
       } else originalOwner.originalEnclosingTopLevelClassOrDummy
 
@@ -2349,11 +2400,12 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *
      *  @param baseClass is a base class of this symbol's owner.
      */
-    final def overriddenSymbol(baseClass: Symbol): Symbol = (
+    final def overriddenSymbol(baseClass: Symbol): Symbol = {
       // concrete always overrides abstract, so don't let an abstract definition
       // claim to be overriding an inherited concrete one.
-      matchingInheritedSymbolIn(baseClass) filter (res => res.isDeferred || !this.isDeferred)
-    )
+      val matching = matchingInheritedSymbolIn(baseClass)
+      if (isDeferred) matching.filter(_.isDeferred) else matching
+    }
 
     private def matchingInheritedSymbolIn(baseClass: Symbol): Symbol =
       if (canMatchInheritedSymbols) matchingSymbol(baseClass, owner.thisType) else NoSymbol
@@ -2513,7 +2565,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  is not a constructor nor a static module rename it by expanding its name to avoid name clashes
      *  @param base  the fully qualified name of this class will be appended if name expansion is needed
      */
-    final def makeNotPrivate(base: Symbol) {
+    @tailrec
+    final def makeNotPrivate(base: Symbol): Unit = {
       if (this.isPrivate) {
         setFlag(notPRIVATE) // this makes it effectively final (isEffectivelyFinal)
         // don't set FINAL -- methods not marked final by user should not end up final in bytecode
@@ -2543,14 +2596,18 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     // return actual source code.) So sourceFile has classfiles filtered out.
     final def sourceFile: AbstractFile = {
       val file = associatedFile
-      if ((file eq NoAbstractFile) || (file.path endsWith ".class")) null else file
+      if (
+        (file eq NoAbstractFile) || {
+          val path = file.path
+          path.endsWith(".class") || path.endsWith(".sig")
+        }) null else file
     }
 
     /** Overridden in ModuleSymbols to delegate to the module class.
      *  Never null; if there is no associated file, returns NoAbstractFile.
      */
     def associatedFile: AbstractFile = enclosingTopLevelClass.associatedFile
-    def associatedFile_=(f: AbstractFile) { abort("associatedFile_= inapplicable for " + this) }
+    def associatedFile_=(f: AbstractFile): Unit = { abort("associatedFile_= inapplicable for " + this) }
 
     /** If this is a sealed or local class, its known direct subclasses.
      *  Otherwise, the empty set.
@@ -2580,7 +2637,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
      *  (the initial Name) before falling back on id, which varies depending
      *  on exactly when a symbol is loaded.
      */
-    final def sealedSortName: String = initName + "#" + id
+    final def sealedSortName: String = initName.toString + "#" + id
 
     /** String representation of symbol's definition key word */
     final def keyString: String =
@@ -2728,30 +2785,29 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     /** String representation of symbol's definition following its name */
     final def infoString(tp: Type): String = {
-      def parents = (
-        if (settings.debug.value) parentsString(tp.parents)
-        else briefParentsString(tp.parents)
-      )
-      def isStructuralThisType = (
-        // prevents disasters like scala/bug#8158
-        owner.isInitialized && owner.isStructuralRefinement && tp == owner.tpe
-      )
-      if (isType) typeParamsString(tp) + (
-        if (isClass) " extends " + parents
-        else if (isAliasType) " = " + tp.resultType
-        else tp.resultType match {
-          case rt @ TypeBounds(_, _) => "" + rt
-          case rt                    => " <: " + rt
+      def loop(tp: Type, followsParens: Boolean): String = {
+        def isStructuralThisType = owner.isInitialized && owner.isStructuralRefinement && tp == owner.tpe // scala/bug#8158
+        // colon+space, preceded by an extra space if needed to prevent the colon glomming onto a symbolic name
+        def postnominalColon: String = if (!followsParens && name.isOperatorName) " : " else ": "
+        def parents = if (settings.debug) parentsString(tp.parents) else briefParentsString(tp.parents)
+        def typeRest =
+          if (isClass) " extends " + parents
+          else if (isAliasType) " = " + tp.resultType
+          else tp.resultType match {
+            case rt@TypeBounds(_, _) => "" + rt
+            case rt => " <: " + rt
+          }
+        tp match {
+          case _ if isType               => typeParamsString(tp) + typeRest
+          case _ if isModule             => "" //  avoid "object X of type X.type"
+          case PolyType(tparams, res)    => typeParamsString(tp) + loop(res, followsParens = true)
+          case NullaryMethodType(res)    => loop(res, followsParens = false)
+          case MethodType(params, res)   => valueParamsString(tp) + loop(res, followsParens = true)
+          case _ if isStructuralThisType => postnominalColon + owner.name
+          case _                         => postnominalColon + tp
         }
-      )
-      else if (isModule) "" //  avoid "object X of type X.type"
-      else tp match {
-        case PolyType(tparams, res)    => typeParamsString(tp) + infoString(res)
-        case NullaryMethodType(res)    => infoString(res)
-        case MethodType(params, res)   => valueParamsString(tp) + infoString(res)
-        case _ if isStructuralThisType => ": " + owner.name
-        case _                         => ": " + tp
       }
+      loop(tp, followsParens = false)
     }
 
     def infosString = infos.toString
@@ -2769,10 +2825,16 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       keyString,
       varianceString + nameString + infoString + flagsExplanationString
     )
+
     /** String representation of symbol's definition.  It uses the
      *  symbol's raw info to avoid forcing types.
      */
     def defString = defStringCompose(signatureString)
+
+    def defStringWithoutImplicit = compose(
+      keyString,
+      varianceString + nameString + signatureString + flagsExplanationString
+    )
 
     /** String representation of symbol's definition, using the supplied
      *  info rather than the symbol's.
@@ -2782,13 +2844,13 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     /** Concatenate strings separated by spaces */
     private def compose(ss: String*) = ss filter (_ != "") mkString " "
 
-    def isSingletonExistential =
-      nme.isSingletonName(name) && (info.bounds.hi.typeSymbol isSubClass SingletonClass)
+    def isSingletonExistential: Boolean =
+      nme.isSingletonName(name)
 
     /** String representation of existentially bound variable */
     def existentialToString =
       if (isSingletonExistential && !settings.debug.value)
-        "val " + tpnme.dropSingletonName(name) + ": " + dropSingletonType(info.bounds.hi)
+        "val " + tpnme.dropSingletonName(name) + ": " + dropSingletonType(info.upperBound)
       else defString
   }
   implicit val SymbolTag = ClassTag[Symbol](classOf[Symbol])
@@ -2801,12 +2863,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     type TypeOfClonedSymbol = TermSymbol
 
-    private[this] var _rawname: TermName = initName
-    def rawname = _rawname
-    def name = {
-      _rawname
-    }
-    override def name_=(name: Name) {
+    override def name_=(name: Name): Unit = {
       if (name != rawname) {
         super.name_=(name)   // logging
         changeNameInOwners(name)
@@ -2852,11 +2909,11 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     override def isLocalDummy       = nme.isLocalDummyName(name)
 
-    override def isClassConstructor = name == nme.CONSTRUCTOR
-    override def isMixinConstructor = name == nme.MIXIN_CONSTRUCTOR
+    override def isClassConstructor = rawname == nme.CONSTRUCTOR
+    override def isMixinConstructor = rawname == nme.MIXIN_CONSTRUCTOR
     override def isConstructor      = isClassConstructor || isMixinConstructor
 
-    override def isPackageObject    = isModule && (name == nme.PACKAGE)
+    override def isPackageObject    = isModule && (rawname == nme.PACKAGE)
 
     // The name in comments is what it is being disambiguated from.
     // TODO - rescue CAPTURED from BYNAMEPARAM so we can see all the names.
@@ -2869,7 +2926,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     }
 
     def referenced: Symbol = _referenced
-    def referenced_=(x: Symbol) { _referenced = x }
+    def referenced_=(x: Symbol): Unit = { _referenced = x }
 
     def existentialBound = singletonBounds(this.tpe)
 
@@ -2909,7 +2966,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     /** change name by appending $$<fully-qualified-name-of-class `base`>
      *  Do the same for any accessed symbols or setters/getters
      */
-    override def expandName(base: Symbol) {
+    override def expandName(base: Symbol): Unit = {
       if (!hasFlag(EXPANDEDNAME)) {
         setFlag(EXPANDEDNAME)
         if (hasAccessorFlag && !isDeferred) {
@@ -2928,26 +2985,26 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
   /** A class for module symbols */
   class ModuleSymbol protected[Symbols] (initOwner: Symbol, initPos: Position, initName: TermName)
   extends TermSymbol(initOwner, initPos, initName) with ModuleSymbolApi {
-    private var flatname: TermName = null
+    private[this] var flatname: TermName = _
 
     override def associatedFile = moduleClass.associatedFile
-    override def associatedFile_=(f: AbstractFile) { moduleClass.associatedFile = f }
+    override def associatedFile_=(f: AbstractFile): Unit = { moduleClass.associatedFile = f }
 
     override def moduleClass = referenced
+
+    final override def skipPackageObject: Symbol =
+      if (isPackageObject) owner else this
 
     override def owner = {
       // a non-static module symbol gets the METHOD flag in uncurry's info transform -- see isModuleNotMethod
       if (!isMethod && needsFlatClasses) rawowner.owner
       else rawowner
     }
-    override def name: TermName = {
-      if (!isMethod && needsFlatClasses) {
-        if (flatname eq null)
-          flatname = nme.flattenedName(rawowner.name, rawname)
+    override protected[this] def flattenedName: TermName = {
+      if (flatname eq null)
+        flatname = nme.flattenedName(rawowner, rawname)
 
-        flatname
-      }
-      else rawname
+      flatname
     }
   }
   implicit val ModuleSymbolTag = ClassTag[ModuleSymbol](classOf[ModuleSymbol])
@@ -3011,6 +3068,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     override def isVarargs: Boolean = definitions.isVarArgsList(paramss.flatten)
 
     override def returnType: Type = {
+      @tailrec
       def loop(tpe: Type): Type =
         tpe match {
           case NullaryMethodType(ret) => loop(ret)
@@ -3021,14 +3079,29 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       loop(info)
     }
 
-    override def exceptions = for (ThrownException(tp) <- annotations) yield tp.typeSymbol
+    override def exceptions = {
+      rawInfo match {
+        case lt: LazyType if isJava =>
+          lt.javaThrownExceptions
+        case _ =>
+          for (ThrownException(tp) <- annotations) yield tp.typeSymbol
+      }
+    }
   }
   implicit val MethodSymbolTag = ClassTag[MethodSymbol](classOf[MethodSymbol])
 
   class AliasTypeSymbol protected[Symbols] (initOwner: Symbol, initPos: Position, initName: TypeName)
   extends TypeSymbol(initOwner, initPos, initName) {
     type TypeOfClonedSymbol = TypeSymbol
-    override def variance = if (isLocalToThis) Bivariant else info.typeSymbol.variance
+    override def variance =
+      // A non-applied parameterized type alias can appear in any variance position
+      if (typeParams.nonEmpty)
+        Invariant
+      else if (isLocalToThis)
+        Bivariant
+      else
+        info.typeSymbol.variance
+
     override def isContravariant = variance.isContravariant
     override def isCovariant     = variance.isCovariant
     final override def isAliasType = true
@@ -3065,15 +3138,10 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
   abstract class TypeSymbol protected[Symbols] (initOwner: Symbol, initPos: Position, initName: TypeName)
   extends Symbol(initOwner, initPos, initName) with TypeSymbolApi {
     privateWithin = NoSymbol
-    private[this] var _rawname: TypeName = initName
 
     type TypeOfClonedSymbol >: Null <: TypeSymbol
     // cloneSymbolImpl still abstract in TypeSymbol.
 
-    def rawname = _rawname
-    def name = {
-      _rawname
-    }
     final def asNameType(n: Name) = n.toTypeName
 
     override def isNonClassType = true
@@ -3086,10 +3154,10 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       case _             => super.resolveOverloadedFlag(flag)
     }
 
-    private var tyconCache: Type = null
-    private var tyconRunId = NoRunId
-    private var tpeCache: Type = _
-    private var tpePeriod = NoPeriod
+    private[this] var tyconCache: Type = null
+    private[this] var tyconRunId = NoRunId
+    private[this] var tpeCache: Type = _
+    private[this] var tpePeriod = NoPeriod
 
     override def isAbstractType          = this hasFlag DEFERRED
     override def isContravariant         = this hasFlag CONTRAVARIANT
@@ -3104,7 +3172,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     // TODO - don't allow names to be renamed in this unstructured a fashion.
     // Rename as little as possible.  Enforce invariants on all renames.
-    override def name_=(name: Name) {
+    override def name_=(name: Name): Unit = {
       if (name != rawname) {
         super.name_=(name)  // logging
         changeNameInOwners(name)
@@ -3141,13 +3209,13 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     override def tpeHK: Type = typeConstructor
 
     private def tyconCacheNeedsUpdate = (tyconCache eq null) || tyconRunId != currentRunId
-    private def setTyconCache(tycon: Type) {
+    private def setTyconCache(tycon: Type): Unit = {
       tyconCache = tycon
       tyconRunId = currentRunId
       assert(tyconCache ne null, this)
     }
 
-    private def maybeUpdateTypeCache() {
+    private def maybeUpdateTypeCache(): Unit = {
       if (tpePeriod != currentPeriod) {
         if (isValid(tpePeriod))
           tpePeriod = currentPeriod
@@ -3155,7 +3223,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
           updateTypeCache()   // perform the actual update
       }
     }
-    private def updateTypeCache() {
+    private def updateTypeCache(): Unit = {
       if (tpeCache eq NoType)
         throw CyclicReference(this, typeConstructor)
 
@@ -3174,7 +3242,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         setTyconCache(tpeCache)
     }
 
-    override def info_=(tp: Type) {
+    override def info_=(tp: Type): Unit = {
       tpePeriod = NoPeriod
       tyconCache = null
       super.info_=(tp)
@@ -3293,9 +3361,6 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     override def isPrimitiveValueClass   = definitions.isPrimitiveValueClass(this)
     override def isPrimitive             = isPrimitiveValueClass
 
-    // The corresponding interface is the last parent by convention.
-    private def lastParent = if (tpe.parents.isEmpty) NoSymbol else tpe.parents.last.typeSymbol
-
     /** Is this class locally defined?
      *  A class is local, if
      *   - it is anonymous, or
@@ -3339,7 +3404,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
         else _associatedFile
       }
     )
-    override def associatedFile_=(f: AbstractFile) { _associatedFile = f }
+    override def associatedFile_=(f: AbstractFile): Unit = { _associatedFile = f }
 
     override def reset(completer: Type): this.type = {
       super.reset(completer)
@@ -3361,21 +3426,17 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       if (needsFlatClasses) rawowner.owner else rawowner
     }
 
-    override def name: TypeName = {
-      if (needsFlatClasses) {
-        if (flatname eq null)
-          flatname = tpnme.flattenedName(rawowner.name, rawname)
-
-        flatname
-      }
-      else rawname
+    override protected[this] def flattenedName: TypeName = {
+      if (flatname eq null)
+        flatname = tpnme.flattenedName(rawowner, rawname)
+      flatname
     }
 
     /** A symbol carrying the self type of the class as its type */
     override def thisSym: Symbol = thissym
 
     /** Sets the self type of the class */
-    override def typeOfThis_=(tp: Type) {
+    override def typeOfThis_=(tp: Type): Unit = {
       thissym = newThisSym(nme.this_, pos).setInfo(tp)
     }
 
@@ -3389,6 +3450,14 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
       clone
     }
 
+    override lazy val flipped: ClassSymbol = {
+      val clone = cloneSymbol(owner)
+      clone.rawInfo.typeParams.foreach { sym =>
+        if (sym.isContravariant) sym.resetFlag(Flag.CONTRAVARIANT).setFlag(Flag.COVARIANT)
+      }
+      clone
+    }
+
     override def derivedValueClassUnbox =
       // (info.decl(nme.unbox)) orElse      uncomment once we accept unbox methods
       (info.decls.find(_ hasAllFlags PARAMACCESSOR | METHOD) getOrElse
@@ -3396,7 +3465,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
     private[this] var childSet: Set[Symbol] = Set()
     override def children = childSet
-    override def addChild(sym: Symbol) {
+    override def addChild(sym: Symbol): Unit = {
       if(!isPastTyper && hasAttachment[KnownDirectSubclassesCalled.type] && !childSet.contains(sym))
         globalError(s"knownDirectSubclasses of ${this.name} observed before subclass ${sym.name} registered")
 
@@ -3431,9 +3500,9 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     private[this] var typeOfThisCache: Type = _
     private[this] var typeOfThisPeriod      = NoPeriod
 
-    private var implicitMembersCacheValue: Scope = EmptyScope
-    private var implicitMembersCacheKey1: Type = NoType
-    private var implicitMembersCacheKey2: ScopeEntry = null
+    private[this] var implicitMembersCacheValue: Scope = EmptyScope
+    private[this] var implicitMembersCacheKey1: Type = NoType
+    private[this] var implicitMembersCacheKey2: ScopeEntry = null
 
     override def isModuleClass = true
     override def linkedClassOfClass = companionClass
@@ -3461,7 +3530,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     }
     // The null check seems to be necessary for the reifier.
     override def sourceModule = if (module ne null) module else companionModule
-    override def sourceModule_=(module: Symbol) { this.module = module }
+    override def sourceModule_=(module: Symbol): Unit = { this.module = module }
   }
 
   class PackageObjectClassSymbol protected[Symbols] (owner0: Symbol, pos0: Position)
@@ -3483,7 +3552,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
 
   class RefinementClassSymbol protected[Symbols] (owner0: Symbol, pos0: Position)
   extends ClassSymbol(owner0, pos0, tpnme.REFINE_CLASS_NAME) {
-    override def name_=(name: Name) {
+    override def name_=(name: Name): Unit = {
       abort("Cannot set name of RefinementClassSymbol to " + name)
     }
     override def isRefinementClass       = true
@@ -3557,8 +3626,6 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     type TypeOfClonedSymbol = NoSymbol
 
     def asNameType(n: Name) = n.toTermName
-    def rawname = nme.NO_NAME
-    def name = nme.NO_NAME
     override def name_=(n: Name) = abort("Cannot set NoSymbol's name to " + n)
 
     // Syncnote: no need to synchronize this, because NoSymbol's initialization is triggered by JavaUniverse.init
@@ -3567,7 +3634,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     privateWithin = this
 
     override def info_=(info: Type) = {
-      infos = TypeHistory(1, NoType, null)
+      infos = noTypeHistory
       unlock()
       validTo = currentPeriod
     }
@@ -3583,8 +3650,6 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     override def locationString: String = ""
     override def enclClassChain = Nil
     override def enclClass: Symbol = this
-    override def enclosingTopLevelClass: Symbol = this
-    override def originalEnclosingTopLevelClassOrDummy: Symbol = this
     override def enclosingPackageClass: Symbol = this
     override def enclMethod: Symbol = this
     override def associatedFile = NoAbstractFile
@@ -3616,8 +3681,13 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
    *  @return           the new list of info-adjusted symbols
    */
   def deriveSymbols(syms: List[Symbol], symFn: Symbol => Symbol): List[Symbol] = {
-    val syms1 = mapList(syms)(symFn)
-    mapList(syms1)(_ substInfo (syms, syms1))
+    if (syms.isEmpty) Nil
+    else {
+      val syms1 = mapList(syms)(symFn)
+      val map = new SubstSymMap(syms, syms1)
+      syms1.foreach(_.modifyInfo(map))
+      syms1
+    }
   }
 
   /** Derives a new list of symbols from the given list by mapping the given
@@ -3632,7 +3702,8 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
    */
   def deriveSymbols2[A](syms: List[Symbol], as: List[A], symFn: (Symbol, A) => Symbol): List[Symbol] = {
     val syms1 = map2(syms, as)(symFn)
-    mapList(syms1)(_ substInfo (syms, syms1))
+    syms1.foreach(_.substInfo(syms, syms1))
+    syms1
   }
 
   /** Derives a new Type by first deriving new symbols as in deriveSymbols,
@@ -3672,7 +3743,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
    */
   def deriveTypeWithWildcards(syms: List[Symbol])(tpe: Type): Type = {
     if (syms.isEmpty) tpe
-    else tpe.instantiateTypeParams(syms, syms map (_ => WildcardType))
+    else tpe.instantiateTypeParams(syms, WildcardType.fillList(syms.length))
   }
   /** Convenience functions which derive symbols by cloning.
    */
@@ -3687,10 +3758,16 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
    *  @param    infoFn  the function to apply to the infos
    *  @return           the newly created, info-adjusted symbols
    */
-  def cloneSymbolsAndModify(syms: List[Symbol], infoFn: Type => Type): List[Symbol] =
-    mapList(cloneSymbols(syms))(_ modifyInfo infoFn)
-  def cloneSymbolsAtOwnerAndModify(syms: List[Symbol], owner: Symbol, infoFn: Type => Type): List[Symbol] =
-    mapList(cloneSymbolsAtOwner(syms, owner))(_ modifyInfo infoFn)
+  def cloneSymbolsAndModify(syms: List[Symbol], infoFn: Type => Type): List[Symbol] = {
+    val cloned = cloneSymbols(syms)
+    cloned foreach (_ modifyInfo infoFn)
+    cloned
+  }
+  def cloneSymbolsAtOwnerAndModify(syms: List[Symbol], owner: Symbol, infoFn: Type => Type): List[Symbol] = {
+    val cloned = cloneSymbolsAtOwner(syms, owner)
+    cloned foreach (_ modifyInfo infoFn)
+    cloned
+  }
 
   /** Functions which perform the standard clone/substituting on the given symbols and type,
    *  then call the creator function with the new symbols and type as arguments.
@@ -3708,12 +3785,15 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
    */
   def mapParamss[T](sym: Symbol)(f: Symbol => T): List[List[T]] = mmap(sym.info.paramss)(f)
 
+  def foreachParamss(sym: Symbol)(f: Symbol => Unit): Unit = mforeach(sym.info.paramss)(f)
+
   def existingSymbols(syms: List[Symbol]): List[Symbol] =
     syms filter (s => (s ne null) && (s ne NoSymbol))
 
   /** Return closest enclosing method, unless shadowed by an enclosing class. */
   // TODO Move back to ExplicitOuter when the other call site is removed.
   // no use of closures here in the interest of speed.
+  @tailrec
   final def closestEnclMethod(from: Symbol): Symbol =
     if (from.isSourceMethod) from
     else if (from.isClass) NoSymbol
@@ -3726,20 +3806,36 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
   }
 
   /** A class for type histories */
-  private case class TypeHistory(var validFrom: Period, info: Type, prev: TypeHistory) {
+  private final case class TypeHistory protected (private var _validFrom: Period, private var _info: Type, private var _prev: TypeHistory) {
     assert((prev eq null) || phaseId(validFrom) > phaseId(prev.validFrom), this)
     assert(validFrom != NoPeriod, this)
+
+    def validFrom: Int = _validFrom
+    def validFrom_=(x: Int): Unit = {_validFrom = x }
+    def info: Type = _info
+    def prev: TypeHistory = _prev
+
+    // OPT: mutate the current TypeHistory rather than creating a new one. TypeHistory instances should not be shared.
+    final def reset(validFrom: Period, info: Type): TypeHistory =
+      if (this ne noTypeHistory) {
+        this._validFrom = validFrom
+        this._info = info
+        this._prev = null
+        this
+      } else
+          TypeHistory(validFrom, info, null)
 
     private def phaseString = {
       val phase = phaseOf(validFrom)
       s"$phase: ${exitingPhase(phase)(info.toString)}"
     }
-    override def toString = toList reverseMap (_.phaseString) mkString ", "
+    override def toString = toList.reverseIterator map (_.phaseString) mkString ", "
 
-    def toList: List[TypeHistory] = this :: ( if (prev eq null) Nil else prev.toList )
+    private def toList: List[TypeHistory] = this :: ( if (prev eq null) Nil else prev.toList )
 
-    def oldest: TypeHistory = if (prev == null) this else prev.oldest
+    @tailrec def oldest: TypeHistory = if (prev == null) this else prev.oldest
   }
+  private[this] final val noTypeHistory = TypeHistory(1, NoType, null)
 
 // ----- Hoisted closures and convenience methods, for compile time reductions -------
 
@@ -3758,7 +3854,7 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
     def loop(mt: Type): Boolean = {
       mt match {
         case MethodType(params, restpe) => params.exists(_.info.dealias.exists(_ == tt)) || loop(restpe)
-        case PolyType(tparams, restpe) => loop(restpe)
+        case PolyType(_, restpe) => loop(restpe)
         case _ => false
       }
     }
@@ -3773,15 +3869,22 @@ trait Symbols extends api.Symbols { self: SymbolTable =>
   val AllOps = SymbolOps(isFlagRelated = false, mask = 0L)
   def FlagOps(mask: Long) = SymbolOps(isFlagRelated = true, mask = mask)
 
-  private def forEachRelevantSymbols(syms: Seq[Symbol], fn: Symbol => Unit): Unit =
-    syms.foreach { sym =>
-          fn(sym)
-          fn(sym.moduleClass)
-          fn(sym.sourceModule)
-    }
+  private def forEachRelevantSymbol(sym: Symbol, fn: Symbol => Unit): Unit = {
+    fn(sym)
+    fn(sym.moduleClass)
+    fn(sym.sourceModule)
+  }
 
-  def markFlagsCompleted(syms: Symbol*)(mask: Long): Unit = forEachRelevantSymbols(syms, _.markFlagsCompleted(mask))
-  def markAllCompleted(syms: Symbol*): Unit = forEachRelevantSymbols(syms, _.markAllCompleted)
+  final def markFlagsCompleted(sym: Symbol)(mask: Long): Unit = forEachRelevantSymbol(sym, _.markFlagsCompleted(mask))
+  final def markFlagsCompleted(sym1: Symbol, sym2: Symbol)(mask: Long): Unit = {
+    markFlagsCompleted(sym1)(mask)
+    markFlagsCompleted(sym2)(mask)
+  }
+  final def markAllCompleted(sym: Symbol): Unit = forEachRelevantSymbol(sym, _.markAllCompleted)
+  final def markAllCompleted(sym1: Symbol, sym2: Symbol): Unit = {
+    markAllCompleted(sym1)
+    markAllCompleted(sym2)
+  }
 }
 
 trait SymbolsStats {

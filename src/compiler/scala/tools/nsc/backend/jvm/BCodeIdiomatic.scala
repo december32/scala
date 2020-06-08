@@ -1,12 +1,19 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2012 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc
 package backend.jvm
 
-import scala.annotation.switch
+import scala.annotation.{switch, tailrec}
 import scala.collection.mutable
 import scala.tools.asm
 import scala.tools.asm.tree.MethodInsnNode
@@ -16,8 +23,7 @@ import scala.tools.nsc.backend.jvm.GenBCode._
 /*
  *  A high-level facade to the ASM API for bytecode generation.
  *
- *  @author  Miguel Garcia, http://lamp.epfl.ch/~magarcia/ScalaCompilerCornerReloaded
- *  @version 1.0
+ *  @author  Miguel Garcia, http://lampwww.epfl.ch/~magarcia/ScalaCompilerCornerReloaded/
  *
  */
 abstract class BCodeIdiomatic {
@@ -34,7 +40,7 @@ abstract class BCodeIdiomatic {
   val EMPTY_STRING_ARRAY   = Array.empty[String]
   val EMPTY_INT_ARRAY      = Array.empty[Int]
   val EMPTY_LABEL_ARRAY    = Array.empty[asm.Label]
-  val EMPTY_BTYPE_ARRAY    = Array.empty[BType]
+  val EMPTY_BTYPE_ARRAY    = BType.emptyArray
 
   /* can-multi-thread */
   final def mkArray(xs: List[BType]): Array[BType] = {
@@ -104,7 +110,7 @@ abstract class BCodeIdiomatic {
         emit(Opcodes.ICONST_M1)
         emit(Opcodes.IXOR)
       } else if (bType == LONG) {
-        jmethod.visitLdcInsn(new java.lang.Long(-1))
+        jmethod.visitLdcInsn(java.lang.Long.valueOf(-1))
         jmethod.visitInsn(Opcodes.LXOR)
       } else {
         abort(s"Impossible to negate a $bType")
@@ -200,7 +206,7 @@ abstract class BCodeIdiomatic {
         case BYTE | SHORT                                             => INT
         case pt: PrimitiveBType                                       => pt
       }
-      val bt = MethodBType(List(paramType), jlStringBuilderRef)
+      val bt = MethodBType(Array(paramType), jlStringBuilderRef)
       invokevirtual(JavaStringBuilderClassName, "append", bt.descriptor, pos)
     }
 
@@ -219,6 +225,7 @@ abstract class BCodeIdiomatic {
      *
      * can-multi-thread
      */
+    @tailrec
     final def emitT2T(from: BType, to: BType): Unit = {
 
       assert(
@@ -241,6 +248,7 @@ abstract class BCodeIdiomatic {
 
       if (from == to) { return }
       // the only conversion involving BOOL that is allowed is (BOOL -> BOOL)
+      // TODO: it seems in the jvm a bool is an int, so it should be treated the same as byte (for example)
       assert(from != BOOL && to != BOOL, s"inconvertible types : $from -> $to")
 
       // We're done with BOOL already
@@ -280,18 +288,22 @@ abstract class BCodeIdiomatic {
     } // end of emitT2T()
 
     // can-multi-thread
-    final def boolconst(b: Boolean): Unit = { iconst(if (b) 1 else 0) }
+    final def boolconst(b: Boolean): Unit = {
+      if (b) emit(Opcodes.ICONST_1)
+      else emit(Opcodes.ICONST_0)
+    }
 
     // can-multi-thread
     final def iconst(cst: Int): Unit = {
-      if (cst >= -1 && cst <= 5) {
-        emit(Opcodes.ICONST_0 + cst)
-      } else if (cst >= java.lang.Byte.MIN_VALUE && cst <= java.lang.Byte.MAX_VALUE) {
-        jmethod.visitIntInsn(Opcodes.BIPUSH, cst)
-      } else if (cst >= java.lang.Short.MIN_VALUE && cst <= java.lang.Short.MAX_VALUE) {
+      if (cst.toByte == cst) {
+        if (cst >= -1 && cst <= 5) {
+          emit(Opcodes.ICONST_0 + cst)
+        } else
+          jmethod.visitIntInsn(Opcodes.BIPUSH, cst)
+      } else if (cst.toShort == cst) {
         jmethod.visitIntInsn(Opcodes.SIPUSH, cst)
       } else {
-        jmethod.visitLdcInsn(new Integer(cst))
+        jmethod.visitLdcInsn(Integer.valueOf(cst))
       }
     }
 
@@ -300,27 +312,27 @@ abstract class BCodeIdiomatic {
       if (cst == 0L || cst == 1L) {
         emit(Opcodes.LCONST_0 + cst.asInstanceOf[Int])
       } else {
-        jmethod.visitLdcInsn(new java.lang.Long(cst))
+        jmethod.visitLdcInsn(java.lang.Long.valueOf(cst))
       }
     }
 
     // can-multi-thread
     final def fconst(cst: Float): Unit = {
-      val bits: Int = java.lang.Float.floatToIntBits(cst)
+      val bits: Int = java.lang.Float.floatToRawIntBits(cst)
       if (bits == 0L || bits == 0x3f800000 || bits == 0x40000000) { // 0..2
         emit(Opcodes.FCONST_0 + cst.asInstanceOf[Int])
       } else {
-        jmethod.visitLdcInsn(new java.lang.Float(cst))
+        jmethod.visitLdcInsn(java.lang.Float.valueOf(cst))
       }
     }
 
     // can-multi-thread
     final def dconst(cst: Double): Unit = {
-      val bits: Long = java.lang.Double.doubleToLongBits(cst)
+      val bits: Long = java.lang.Double.doubleToRawLongBits(cst)
       if (bits == 0L || bits == 0x3ff0000000000000L) { // +0.0d and 1.0d
         emit(Opcodes.DCONST_0 + cst.asInstanceOf[Int])
       } else {
-        jmethod.visitLdcInsn(new java.lang.Double(cst))
+        jmethod.visitLdcInsn(java.lang.Double.valueOf(cst))
       }
     }
 
@@ -331,7 +343,7 @@ abstract class BCodeIdiomatic {
           /* phantom type at play in `Array(null)`, scala/bug#1513. On the other hand, Array(()) has element type `scala.runtime.BoxedUnit` which isObject. */
           jmethod.visitTypeInsn(Opcodes.ANEWARRAY, c.classOrArrayType)
         case _ =>
-          assert(elem.isNonVoidPrimitiveType)
+          assert(elem.isNonVoidPrimitiveType, "Require primitive")
           val rand = {
             // using `asm.Type.SHORT` instead of `BType.SHORT` because otherwise "warning: could not emit switch for @switch annotated match"
             (elem: @unchecked) match {
@@ -414,7 +426,7 @@ abstract class BCodeIdiomatic {
      * can-multi-thread
      */
     final def emitSWITCH(keys: Array[Int], branches: Array[asm.Label], defaultBranch: asm.Label, minDensity: Double): Unit = {
-      assert(keys.length == branches.length)
+      assert(keys.length == branches.length, s"Bad branches, have ${branches.length}, wanted ${keys.length}")
 
       // For empty keys, it makes sense emitting LOOKUPSWITCH with defaultBranch only.
       // Similar to what javac emits for a switch statement consisting only of a default case.

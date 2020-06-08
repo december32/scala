@@ -6,7 +6,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
-import scala.tools.testing.AssertUtil.assertThrows
+import scala.tools.testkit.AssertUtil.assertThrows
 import scala.reflect.internal.util.OffsetPosition
 
 @RunWith(classOf[JUnit4])
@@ -17,7 +17,7 @@ class CannotHaveAttrsTest {
       def productArity: Int = ???
       def productElement(n: Int): Any = ???
     }
-    val attrlessTrees = List(CHA, EmptyTree, emptyValDef, pendingSuperCall)
+    val attrlessTrees = List(CHA, EmptyTree, noSelfType, pendingSuperCall)
   }
   import symbolTable._
 
@@ -47,7 +47,7 @@ class CannotHaveAttrsTest {
       assertEquals(t.tpe, NoType)
     }
 
-  @Test @org.junit.Ignore // scala/bug#8816
+  @Test @org.junit.Ignore("scala/bug#8816")
   def nonDefaultPosAssignmentFails = {
     val pos = new OffsetPosition(null, 0)
     attrlessTrees.foreach { t =>
@@ -56,7 +56,7 @@ class CannotHaveAttrsTest {
     }
   }
 
-  @Test @org.junit.Ignore // scala/bug#8816
+  @Test @org.junit.Ignore("scala/bug#8816")
   def nonDefaultTpeAssignmentFails = {
     val tpe = typeOf[Int]
     attrlessTrees.foreach { t =>
@@ -70,9 +70,9 @@ class CannotHaveAttrsTest {
   def attachmentsAreIgnored = {
     attrlessTrees.foreach { t =>
       t.setAttachments(NoPosition.update(new Attach))
-      assert(t.attachments == NoPosition)
+      assertEquals(NoPosition, t.attachments)
       t.updateAttachment(new Attach)
-      assert(t.attachments == NoPosition)
+      assertEquals(NoPosition, t.attachments)
       t.removeAttachment[Attach] // no exception
     }
   }

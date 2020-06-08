@@ -1,7 +1,21 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect
 package internal
 package transform
+
+import scala.annotation.tailrec
 
 trait Erasure {
 
@@ -15,6 +29,7 @@ trait Erasure {
     /** Is `tp` an unbounded generic type (i.e. which could be instantiated
      *  with primitive as well as class types)?.
      */
+    @tailrec
     private def genericCore(tp: Type): Type = tp.dealiasWiden match {
       /* A Java Array<T> is erased to Array[Object] (T can only be a reference type), where as a Scala Array[T] is
        * erased to Object. However, there is only symbol for the Array class. So to make the distinction between
@@ -56,9 +71,9 @@ trait Erasure {
   /** Arrays despite their finality may turn up as refined type parents,
    *  e.g. with "tagged types" like Array[Int] with T.
    */
-  protected def unboundedGenericArrayLevel(tp: Type): Int = tp match {
-    case GenericArray(level, core) if !(core <:< AnyRefTpe) => level
-    case RefinedType(ps, _) if ps.nonEmpty                  => logResult(s"Unbounded generic level for $tp is")((ps map unboundedGenericArrayLevel).max)
+  def unboundedGenericArrayLevel(tp: Type): Int = tp match {
+    case GenericArray(level, core) if !(core <:< AnyRefTpe || core.upperBound == ObjectTpeJava) => level
+    case RefinedType(ps, _) if ps.nonEmpty                  => logResult(s"Unbounded generic level for $tp is")(unboundedGenericArrayLevel(intersectionDominator(ps)))
     case _                                                  => 0
   }
 
@@ -78,7 +93,7 @@ trait Erasure {
    *  This method needs to be called at a phase no later than erasurephase
    */
   def erasedValueClassArg(tref: TypeRef): Type = {
-    assert(!phase.erasedTypes)
+    assert(!phase.erasedTypes, "Types are erased")
     val clazz = tref.sym
     if (valueClassIsParametric(clazz)) {
       val underlying = tref.memberType(clazz.derivedValueClassUnbox).resultType
@@ -93,9 +108,8 @@ trait Erasure {
    *  This method needs to be called at a phase no later than erasurephase
    */
   def valueClassIsParametric(clazz: Symbol): Boolean = {
-    assert(!phase.erasedTypes)
-    clazz.typeParams contains
-      clazz.derivedValueClassUnbox.tpe.resultType.typeSymbol
+    assert(!phase.erasedTypes, "valueClassIsParametric called after erasure")
+    clazz.typeParams contains clazz.derivedValueClassUnbox.tpe.resultType.typeSymbol
   }
 
   abstract class ErasureMap extends TypeMap {
@@ -115,23 +129,22 @@ trait Erasure {
       case FoldableConstantType(ct) =>
         // erase classOf[List[_]] to classOf[List]. special case for classOf[Unit], avoid erasing to classOf[BoxedUnit].
         if (ct.tag == ClazzTag && ct.typeValue.typeSymbol != UnitClass) ConstantType(Constant(apply(ct.typeValue)))
-        else if(ct.isSymbol) SymbolTpe
         else tp
       case st: ThisType if st.sym.isPackageClass =>
         tp
       case st: SubType =>
         apply(st.supertype)
       case tref @ TypeRef(pre, sym, args) =>
-        if (sym == ArrayClass)
+        if (sym eq ArrayClass)
           if (unboundedGenericArrayLevel(tp) == 1) ObjectTpe
           else if (args.head.typeSymbol.isBottomClass)  arrayType(ObjectTpe)
           else typeRef(apply(pre), sym, args map applyInArray)
-        else if (sym == AnyClass || sym == AnyValClass || sym == SingletonClass) ObjectTpe
-        else if (sym == UnitClass) BoxedUnitTpe
+        else if ((sym eq AnyClass) || (sym eq AnyValClass) || (sym eq SingletonClass)) ObjectTpe
+        else if (sym eq UnitClass) BoxedUnitTpe
         else if (sym.isRefinementClass) apply(mergeParents(tp.parents))
         else if (sym.isDerivedValueClass) eraseDerivedValueClassRef(tref)
         else if (sym.isClass) eraseNormalClassRef(tref)
-        else apply(sym.info asSeenFrom (pre, sym.owner)) // alias type or abstract type
+        else apply(sym.info.asSeenFrom(pre, sym.owner)) // alias type or abstract type
       case PolyType(tparams, restpe) =>
         apply(restpe)
       case ExistentialType(tparams, restpe) =>
@@ -142,30 +155,30 @@ trait Erasure {
           if (restpe.typeSymbol == UnitClass) UnitTpe
           // this replaces each typeref that refers to an argument
           // by the type `p.tpe` of the actual argument p (p in params)
-          else apply(mt.resultType(mt.paramTypes)))
+          else apply(mt.resultTypeOwnParamTypes))
       case RefinedType(parents, decls) =>
         apply(mergeParents(parents))
       case AnnotatedType(_, atp) =>
         apply(atp)
       case ClassInfoType(parents, decls, clazz) =>
         val newParents =
-          if (parents.isEmpty || clazz == ObjectClass || isPrimitiveValueClass(clazz)) Nil
-          else if (clazz == ArrayClass) ObjectTpe :: Nil
+          if (parents.isEmpty || (clazz eq ObjectClass) || isPrimitiveValueClass(clazz)) Nil
+          else if (clazz eq ArrayClass) ObjectTpe :: Nil
           else {
             val erasedParents = parents mapConserve this
 
             // drop first parent for traits -- it has been normalized to a class by now,
             // but we should drop that in bytecode
             if (clazz.hasFlag(Flags.TRAIT) && !clazz.hasFlag(Flags.JAVA))
-              ObjectTpe :: erasedParents.tail.filter(_.typeSymbol != ObjectClass)
+              ObjectTpe :: erasedParents.tail.filter(_.typeSymbol ne ObjectClass)
             else erasedParents
           }
         if (newParents eq parents) tp
         else ClassInfoType(newParents, decls, clazz)
 
-      // can happen while this map is being used before erasure (e.g. when reasoning about sam types)
+      // A BoundedWildcardType, e.g., can happen while this map is being used before erasure (e.g. when reasoning about sam types)
       // the regular mapOver will cause a class cast exception because TypeBounds don't erase to TypeBounds
-      case _: BoundedWildcardType => tp // skip
+      case pt: ProtoType => pt // skip
 
       case _ =>
         tp.mapOver(this)
@@ -314,7 +327,7 @@ trait Erasure {
   }
 
   object boxingErasure extends ScalaErasureMap {
-    private var boxPrimitives = true
+    private[this] var boxPrimitives = true
 
     override def applyInArray(tp: Type): Type = {
       val saved = boxPrimitives

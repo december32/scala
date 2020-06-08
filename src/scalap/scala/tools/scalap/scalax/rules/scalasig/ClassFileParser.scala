@@ -1,9 +1,19 @@
+/*
+ * Scala classfile decoder (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.scalap
 package scalax
 package rules
 package scalasig
-
-import language.postfixOps
 
 import java.io.IOException
 
@@ -84,11 +94,11 @@ trait ByteCodeReader extends RulesWithState {
   type S = ByteCode
   type Parser[A] = Rule[A, String]
 
-  val byte = apply(_ nextByte)
+  val byte = apply(_.nextByte)
 
   val u1 = byte ^^ (_ & 0xFF)
-  val u2 = bytes(2) ^^ (_ toInt)
-  val u4 = bytes(4) ^^ (_ toInt) // should map to Long??
+  val u2 = bytes(2) ^^ (_.toInt)
+  val u4 = bytes(4) ^^ (_.toInt) // should map to Long??
 
   def bytes(n: Int) = apply(_ next n)
 }
@@ -99,7 +109,7 @@ object ClassFileParser extends ByteCodeReader {
 
   val magicNumber = (u4 filter (_ == 0xCAFEBABE)) | error("Not a valid class file")
   val version = u2 ~ u2 ^^ { case minor ~ major => (major,  minor) }
-  val constantPool = (u2 ^^ ConstantPool) >> repeatUntil(constantPoolEntry)(_ isFull)
+  val constantPool = (u2 ^^ ConstantPool) >> repeatUntil(constantPoolEntry)(_.isFull)
 
   // NOTE currently most constants just evaluate to a string description
   // TODO evaluate to useful values

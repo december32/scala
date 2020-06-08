@@ -5,10 +5,12 @@ import org.junit.runners.JUnit4
 import org.junit.Test
 import org.junit.Assert._
 
+import scala.annotation.unused
 import scala.ref.WeakReference
 import scala.util.Try
 
 @RunWith(classOf[JUnit4])
+@deprecated("Tests deprecated Stream", since="2.13")
 class StreamTest {
 
   @Test
@@ -93,9 +95,9 @@ class StreamTest {
     }
 
     // call op on a stream which records every strict evaluation
-    val result = op(trackEffectsOnNaturals)
+    @unused val result = op(trackEffectsOnNaturals)
 
-    assertTrue( evaluated == expectedEvaluated )
+    assertEquals(expectedEvaluated, evaluated)
   }
 
   @Test // scala/bug#9134
@@ -154,14 +156,14 @@ class StreamTest {
   @Test
   def testStreamToStringWhenHeadAndTailBothAreNotEvaluated = {
     val l = Stream(1, 2, 3, 4, 5)
-    assertEquals("Stream(1, ?)", l.toString)
+    assertEquals("Stream(1, <not computed>)", l.toString)
   }
 
   @Test
   def testStreamToStringWhenOnlyHeadIsEvaluated = {
     val l = Stream(1, 2, 3, 4, 5)
     l.head
-    assertEquals("Stream(1, ?)", l.toString)
+    assertEquals("Stream(1, <not computed>)", l.toString)
   }
 
   @Test
@@ -169,7 +171,7 @@ class StreamTest {
     val l = Stream(1, 2, 3, 4, 5)
     l.head
     l.tail
-    assertEquals("Stream(1, 2, ?)", l.toString)
+    assertEquals("Stream(1, 2, <not computed>)", l.toString)
   }
 
   @Test
@@ -177,21 +179,21 @@ class StreamTest {
     val l = Stream(1, 2, 3, 4, 5)
     l.head
     l.tail.head
-    assertEquals("Stream(1, 2, ?)", l.toString)
+    assertEquals("Stream(1, 2, <not computed>)", l.toString)
   }
 
   @Test
   def testStreamToStringWhenHeadIsNotEvaluatedAndOnlyTailIsEvaluated = {
     val l = Stream(1, 2, 3, 4, 5)
     l.tail
-    assertEquals("Stream(1, 2, ?)", l.toString)
+    assertEquals("Stream(1, 2, <not computed>)", l.toString)
   }
 
   @Test
   def testStreamToStringWhedHeadIsNotEvaluatedAndTailHeadIsEvaluated = {
     val l = Stream(1, 2, 3, 4, 5)
     l.tail.head
-    assertEquals("Stream(1, 2, ?)", l.toString)
+    assertEquals("Stream(1, 2, <not computed>)", l.toString)
   }
 
   @Test
@@ -211,7 +213,7 @@ class StreamTest {
   def testStreamToStringWhenStreamHasCyclicReference: Unit = {
     lazy val cyc: Stream[Int] = 1 #:: 2 #:: 3 #:: 4 #:: cyc
     cyc.tail.tail.tail.tail
-    assertEquals("Stream(1, 2, 3, 4, ...)", cyc.toString)
+    assertEquals("Stream(1, 2, 3, 4, <cycle>)", cyc.toString)
   }
 
   @Test
@@ -232,9 +234,56 @@ class StreamTest {
     val s2 = it1.toStream
     s2.iterator.next()
     assertEquals(1, it1.current)
-    s2.flatMap { i => (if(i < 3) None else Some(i)): Option[Int] }.iterator.next
+    s2.flatMap { i => (if(i < 3) None else Some(i)): Option[Int] }.iterator.next()
     assertEquals(3, it1.current)
     s2.flatMap { i => (if(i < 5) None else Some(i)): Option[Int] }.headOption
     assertEquals(5, it1.current)
+  }
+
+  @Test
+  def t10883: Unit = {
+    var value: Int = -1
+    Stream.iterate(0){ a =>
+      val next = a + 1
+      value = next
+      next
+    }.take(3).toList
+    assertEquals(2, value)
+    value = -1
+    Stream.iterate(0){ a =>
+      val next = a + 1
+      value = next
+      next
+    }.iterator.take(3).toList
+    assertEquals(2, value)
+  }
+
+  @Test
+  def t09791: Unit = {
+    // updated tests
+    val x = Stream.continually("*").updated(0, "new value")
+    assertEquals(List("new value", "*", "*", "*", "*", "*", "*", "*", "*", "*"), x.take(10).toList)
+
+    val y = Stream.continually("*").updated(4, "new value")
+    assertEquals(List("*", "*", "*", "*", "new value", "*", "*", "*", "*", "*"), y.take(10).toList)
+
+    // patch tests
+
+    // doesn't matter what we put for 'replaced' arg, since the stream is infinite
+    assertEquals(List("new", "value", "!", "*", "*", "*", "*", "*", "*", "*"),
+      Stream.continually("*").patch(0, List("new", "value", "!"), 0).take(10).toList)
+
+    assertEquals(List("new", "value", "!", "*", "*", "*", "*", "*", "*", "*"),
+      Stream.continually("*").patch(0, List("new", "value", "!"), 2).take(10).toList)
+
+    assertEquals(List("*", "new", "value", "!", "*", "*", "*", "*", "*", "*"),
+      Stream.continually("*").patch(1, List("new", "value", "!"), 2).take(10).toList)
+
+    // actually test 'replaced'
+    assertEquals(List("*", "new", "_", "_", "_", "!", "*", "*", "*", "*"),
+      Stream.continually("*")
+        .patch(1, List("new", "value", "!"), 2)
+        .patch(2, List("_", "_", "_"), 1)
+        .take(10).toList)
   }
 }

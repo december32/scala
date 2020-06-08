@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect.internal.util
 
@@ -6,7 +18,6 @@ import java.lang.ref.{ReferenceQueue, WeakReference}
 import scala.annotation.tailrec
 import scala.collection.{AbstractIndexedSeqView, IndexedSeqView}
 import scala.collection.mutable.{Set => MSet}
-import scala.collection.immutable.ArraySeq
 
 /**
  * A HashSet where the elements are stored weakly. Elements in this set are eligible for GC if no other
@@ -87,7 +98,7 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
   /**
    * remove a single entry from a linked list in a given bucket
    */
-  private[this] def remove(bucket: Int, prevEntry: Entry[A], entry: Entry[A]) {
+  private[this] def remove(bucket: Int, prevEntry: Entry[A], entry: Entry[A]): Unit = {
     prevEntry match {
       case null => table(bucket) = entry.tail
       case _ => prevEntry.tail = entry.tail
@@ -98,7 +109,7 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
   /**
    * remove entries associated with elements that have been gc'ed
    */
-  private[this] def removeStaleEntries() {
+  private[this] def removeStaleEntries(): Unit = {
     def poll(): Entry[A] = queue.poll().asInstanceOf[Entry[A]]
 
     @tailrec
@@ -123,7 +134,7 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
   /**
    * Double the size of the internal table
    */
-  private[this] def resize() {
+  private[this] def resize(): Unit = {
     val oldTable = table
     table = new Array[Entry[A]](oldTable.size * 2)
     threshold = computeThreshold
@@ -210,7 +221,7 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
       val bucket = bucketFor(hash)
       val oldHead = table(bucket)
 
-      def add() {
+      def add(): Unit = {
         table(bucket) = new Entry(elem, hash, oldHead, queue)
         count += 1
         if (count > threshold) resize()
@@ -249,7 +260,7 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
     }
   }
 
-  def -(elem: A) = subtractOne(elem)
+  override def -(elem: A) = subtractOne(elem)
 
   // empty this set
   override def clear(): Unit = {
@@ -271,16 +282,18 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
     count
   }
 
+  override def isEmpty: Boolean = size == 0
   override def foreach[U](f: A => U): Unit = iterator foreach f
 
-  // It has the `()` because iterator runs `removeStaleEntries()`
-  override def toList(): List[A] = iterator.toList
+  // It had the `()` because iterator runs `removeStaleEntries()`.
+  // Instead of just using a different name, keep the name and lose the parens.
+  override def toList: List[A] = iterator.toList
 
   // Iterator over all the elements in this set in no particular order
   override def iterator: Iterator[A] = {
     removeStaleEntries()
 
-    new Iterator[A] {
+    new collection.AbstractIterator[A] {
 
       /**
        * the bucket currently being examined. Initially it's set past the last bucket and will be decremented
@@ -339,7 +352,7 @@ final class WeakHashSet[A <: AnyRef](val initialCapacity: Int, val loadFactor: D
      * the entries must be stable. If any are garbage collected during validation
      * then an assertion may inappropriately fire.
      */
-    def fullyValidate: Unit = {
+    def fullyValidate(): Unit = {
       var computedCount = 0
       var bucket = 0
       while (bucket < table.size) {

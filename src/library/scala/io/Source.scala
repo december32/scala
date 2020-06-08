@@ -1,10 +1,14 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2003-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala
 package io
@@ -15,9 +19,6 @@ import java.net.{ URI, URL }
 
 /** This object provides convenience methods to create an iterable
  *  representation of a source file.
- *
- *  @author  Burak Emir, Paul Phillips
- *  @version 1.0, 19/08/2004
  */
 object Source {
   val DefaultBufSize = 2048
@@ -95,7 +96,7 @@ object Source {
       bufferSize,
       () => fromFile(file, bufferSize)(codec),
       () => inputStream.close()
-    )(codec) withDescription ("file:" + file.getAbsolutePath)
+    )(codec) withDescription s"file:${file.getAbsolutePath}"
   }
 
   /** Create a `Source` from array of bytes, decoding
@@ -212,8 +213,8 @@ abstract class Source extends Iterator[Char] with Closeable {
     private[this] val sb = new StringBuilder
 
     lazy val iter: BufferedIterator[Char] = Source.this.iter.buffered
-    def isNewline(ch: Char) = ch == '\r' || ch == '\n'
-    def getc() = iter.hasNext && {
+    def isNewline(ch: Char): Boolean = ch == '\r' || ch == '\n'
+    def getc(): Boolean = iter.hasNext && {
       val ch = iter.next()
       if (ch == '\n') false
       else if (ch == '\r') {
@@ -227,8 +228,8 @@ abstract class Source extends Iterator[Char] with Closeable {
         true
       }
     }
-    def hasNext = iter.hasNext
-    def next = {
+    def hasNext: Boolean = iter.hasNext
+    def next(): String = {
       sb.clear()
       while (getc()) { }
       sb.toString
@@ -243,7 +244,7 @@ abstract class Source extends Iterator[Char] with Closeable {
 
   /** Returns `'''true'''` if this source has more characters.
    */
-  def hasNext = iter.hasNext
+  def hasNext: Boolean = iter.hasNext
 
   /** Returns next character.
    */
@@ -289,8 +290,8 @@ abstract class Source extends Iterator[Char] with Closeable {
   object NoPositioner extends Positioner(Position) {
     override def next(): Char = iter.next()
   }
-  def ch = positioner.ch
-  def pos = positioner.pos
+  def ch: Char = positioner.ch
+  def pos: Int = positioner.pos
 
   /** Reports an error message to the output stream `out`.
    *

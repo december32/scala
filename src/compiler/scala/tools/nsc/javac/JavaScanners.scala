@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala.tools.nsc
@@ -10,9 +17,10 @@ import scala.tools.nsc.util.JavaCharArrayReader
 import scala.reflect.internal.util._
 import scala.reflect.internal.Chars._
 import JavaTokens._
-import scala.annotation.{ switch, tailrec }
+import scala.annotation.{switch, tailrec}
 import scala.language.implicitConversions
 import scala.collection.immutable.ArraySeq
+import scala.tools.nsc.Reporting.WarningCategory
 
 // Todo merge these better with Scanners
 trait JavaScanners extends ast.parser.ScannersCommon {
@@ -46,12 +54,13 @@ trait JavaScanners extends ast.parser.ScannersCommon {
     /** the base of a number */
     var base: Int = 0
 
-    def copyFrom(td: JavaTokenData) = {
+    def copyFrom(td: JavaTokenData): this.type = {
       this.token = td.token
       this.pos = td.pos
       this.lastPos = td.lastPos
       this.name = td.name
       this.base = td.base
+      this
     }
   }
 
@@ -155,54 +164,54 @@ trait JavaScanners extends ast.parser.ScannersCommon {
       case STRINGLIT  => "string literal"
       case EOF        => "eof"
       case ERROR      => "something"
-      case AMP        => "`&'"
-      case AMPAMP     => "`&&'"
-      case AMPEQ      => "`&='"
-      case ASTERISK   => "`*'"
-      case ASTERISKEQ => "`*='"
-      case AT         => "`@'"
-      case BANG       => "`!'"
-      case BANGEQ     => "`!='"
-      case BAR        => "`|'"
-      case BARBAR     => "`||'"
-      case BAREQ      => "`|='"
-      case COLON      => "`:'"
-      case COMMA      => "`,'"
-      case DOT        => "`.'"
-      case DOTDOTDOT  => "`...'"
-      case EQEQ       => "`=='"
-      case EQUALS     => "`='"
-      case GT         => "`>'"
-      case GTEQ       => "`>='"
-      case GTGT       => "`>>'"
-      case GTGTEQ     => "`>>='"
-      case GTGTGT     => "`>>>'"
-      case GTGTGTEQ   => "`>>>='"
-      case HAT        => "`^'"
-      case HATEQ      => "`^='"
-      case LBRACE     => "`{'"
-      case LBRACKET   => "`['"
-      case LPAREN     => "`('"
-      case LT         => "`<'"
-      case LTEQ       => "`<='"
-      case LTLT       => "`<<'"
-      case LTLTEQ     => "`<<='"
-      case MINUS      => "`-'"
-      case MINUSEQ    => "`-='"
-      case MINUSMINUS => "`--'"
-      case PERCENT    => "`%'"
-      case PERCENTEQ  => "`%='"
-      case PLUS       => "`+'"
-      case PLUSEQ     => "`+='"
-      case PLUSPLUS   => "`++'"
-      case QMARK      => "`?'"
-      case RBRACE     => "`}'"
-      case RBRACKET   => "`]'"
-      case RPAREN     => "`)'"
-      case SEMI       => "`;'"
-      case SLASH      => "`/'"
-      case SLASHEQ    => "`/='"
-      case TILDE      => "`~'"
+      case AMP        => "`&`"
+      case AMPAMP     => "`&&`"
+      case AMPEQ      => "`&=`"
+      case ASTERISK   => "`*`"
+      case ASTERISKEQ => "`*=`"
+      case AT         => "`@`"
+      case BANG       => "`!`"
+      case BANGEQ     => "`!=`"
+      case BAR        => "`|`"
+      case BARBAR     => "`||`"
+      case BAREQ      => "`|=`"
+      case COLON      => "`:`"
+      case COMMA      => "`,`"
+      case DOT        => "`.`"
+      case DOTDOTDOT  => "`...`"
+      case EQEQ       => "`==`"
+      case EQUALS     => "`=`"
+      case GT         => "`>`"
+      case GTEQ       => "`>=`"
+      case GTGT       => "`>>`"
+      case GTGTEQ     => "`>>=`"
+      case GTGTGT     => "`>>>`"
+      case GTGTGTEQ   => "`>>>=`"
+      case HAT        => "`^`"
+      case HATEQ      => "`^=`"
+      case LBRACE     => "`{`"
+      case LBRACKET   => "`[`"
+      case LPAREN     => "`(`"
+      case LT         => "`<`"
+      case LTEQ       => "`<=`"
+      case LTLT       => "`<<`"
+      case LTLTEQ     => "`<<=`"
+      case MINUS      => "`-`"
+      case MINUSEQ    => "`-=`"
+      case MINUSMINUS => "`--`"
+      case PERCENT    => "`%`"
+      case PERCENTEQ  => "`%=`"
+      case PLUS       => "`+`"
+      case PLUSEQ     => "`+=`"
+      case PLUSPLUS   => "`++`"
+      case QMARK      => "`?`"
+      case RBRACE     => "`}`"
+      case RBRACKET   => "`]`"
+      case RPAREN     => "`)`"
+      case SEMI       => "`;`"
+      case SLASH      => "`/`"
+      case SLASHEQ    => "`/=`"
+      case TILDE      => "`~`"
       case _ =>
         try ("`" + tokenName(token) + "'")
         catch {
@@ -513,7 +522,7 @@ trait JavaScanners extends ast.parser.ScannersCommon {
                   if (in.ch == '.') {
                     in.next()
                     token = DOTDOTDOT
-                  } else syntaxError("`.' character expected")
+                  } else syntaxError("`.` character expected")
                 }
                 return
 
@@ -874,11 +883,12 @@ trait JavaScanners extends ast.parser.ScannersCommon {
   }
 
   class JavaUnitScanner(unit: CompilationUnit) extends JavaScanner {
-    in = new JavaCharArrayReader(new ArraySeq.ofChar(unit.source.content), !settings.nouescape.value, syntaxError)
+    in = new JavaCharArrayReader(new ArraySeq.ofChar(unit.source.content), true, syntaxError)
     init()
     def error(pos: Int, msg: String) = reporter.error(pos, msg)
     def incompleteInputError(pos: Int, msg: String) = currentRun.parsing.incompleteInputError(pos, msg)
-    def deprecationWarning(pos: Int, msg: String, since: String) = currentRun.reporting.deprecationWarning(pos, msg, since)
+    def warning(pos: Int, msg: String, category: WarningCategory) = runReporting.warning(pos, msg, category, site = "")
+    def deprecationWarning(pos: Int, msg: String, since: String) = runReporting.deprecationWarning(pos, msg, since, site = "", origin = "")
     implicit def g2p(pos: Int): Position = Position.offset(unit.source, pos)
   }
 }

@@ -1,4 +1,14 @@
-/* NSC -- new Scala compiler -- Copyright 2007-2013 LAMP/EPFL */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala
 package tools.nsc
@@ -27,7 +37,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
                with MemberLookup =>
 
   import global._
-  import definitions.{ ObjectClass, NothingClass, AnyClass, AnyValClass, AnyRefClass }
+  import definitions.{ ObjectClass, NothingClass, AnyClass, AnyValClass, AnyRefClass, AnnotationClass }
   import rootMirror.{ RootPackage, EmptyPackage }
   import ModelFactory._
 
@@ -76,7 +86,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     def inTemplate: TemplateImpl = inTpl
     def toRoot: List[EntityImpl] = this :: inTpl.toRoot
     def qualifiedName = name
-    def annotations = sym.annotations.filterNot(_.tpe =:= typeOf[macroImpl]).map(makeAnnotation)
+    def annotations = sym.annotations.filterNot(_.atp =:= typeOf[macroImpl]).map(makeAnnotation)
     def inPackageObject: Boolean = sym.owner.isModuleClass && sym.owner.sourceModule.isPackageObject
     def isType = sym.name.isTypeName
   }
@@ -88,7 +98,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     def isTrait = sym.isTrait
     def isClass = sym.isClass && !sym.isTrait
     def isObject = sym.isModule && !sym.hasPackageFlag
-    def isCaseClass = sym.isCaseClass
+    def isCase = sym.isCase
     def isRootPackage = false
     def selfType = if (sym.thisSym eq sym) None else Some(makeType(sym.thisSym.typeOfThis, this))
   }
@@ -118,13 +128,16 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
       else if (sym.isProtectedLocal) ProtectedInInstance()
       else {
         val qual =
-          if (sym.hasAccessBoundary)
-            Some(makeTemplate(sym.privateWithin))
-          else None
-        if (sym.isPrivate) PrivateInTemplate(inTpl)
-        else if (sym.isProtected) ProtectedInTemplate(qual getOrElse inTpl)
+          if (sym.hasAccessBoundary) {
+            val qualTpl = makeTemplate(sym.privateWithin)
+            if (qualTpl != inTpl) Some(qualTpl)
+            else None
+          } else None
+        def tp(c: TemplateImpl) = makeType(c.sym.tpe, inTpl)
+        if (sym.isPrivate) PrivateInTemplate(None)
+        else if (sym.isProtected) ProtectedInTemplate(qual.map(tp))
         else qual match {
-          case Some(q) => PrivateInTemplate(q)
+          case Some(q) => PrivateInTemplate(Some(tp(q)))
           case None => Public()
         }
       }
@@ -196,7 +209,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
         case d: MemberEntity with Def =>
           val paramLists: List[String] =
             if (d.valueParams.isEmpty) Nil
-            else d.valueParams map (ps => ps map (_.resultType.name) mkString ("(",",",")"))
+            else d.valueParams.map(ps => ps.map(_.resultType.name).mkString("(",",",")"))
           paramLists.mkString
         case _ => ""
       }
@@ -290,13 +303,17 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
       val assumedSourceRoot  = fixPath(settings.sourcepath.value) stripSuffix "/"
 
       if (!settings.docsourceurl.isDefault)
-        inSource map { case (file, _) =>
-          val filePath = fixPath(file.path).replaceFirst("^" + assumedSourceRoot, "").stripSuffix(".scala")
+        inSource map { case (file, line) =>
+          val filePathExt = fixPath(file.path).replaceFirst("^" + assumedSourceRoot, "")
+          val (filePath, fileExt) = filePathExt.splitAt(filePathExt.indexOf(".", filePathExt.lastIndexOf("/")))
           val tplOwner = this.inTemplate.qualifiedName
           val tplName = this.name
-          val patches = new Regex("""€\{(FILE_PATH|TPL_OWNER|TPL_NAME)\}""")
+          val patches = new Regex("""€\{(FILE_PATH|FILE_EXT|FILE_PATH_EXT|FILE_LINE|TPL_OWNER|TPL_NAME)\}""")
           def substitute(name: String): String = name match {
             case "FILE_PATH" => filePath
+            case "FILE_EXT" => fileExt
+            case "FILE_PATH_EXT" => filePathExt
+            case "FILE_LINE" => line.toString
             case "TPL_OWNER" => tplOwner
             case "TPL_NAME" => tplName
           }
@@ -435,7 +452,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     def primaryConstructor: Option[MemberImpl with Constructor] = if (isClass) constructors find { _.isPrimary } else None
     override def valueParams =
       // we don't want params on a class (non case class) signature
-      if (isCaseClass) primaryConstructor match {
+      if (isCase) primaryConstructor match {
         case Some(const) => const.sym.paramss map (_ map (makeValueParam(_, this)))
         case None => List()
       }
@@ -550,14 +567,15 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
    * package object abstraction and placing members directly in the package.
    *
    * Here's the explanation of what we do. The code:
-   *
+   * {{{
    * package foo {
    *   object `package` {
    *     class Bar
    *   }
    * }
-   *
+   * }}}
    * will yield this Symbol structure:
+   * <pre>
    *                                       +---------+ (2)
    *                                       |         |
    * +---------------+         +---------- v ------- | ---+                              +--------+ (2)
@@ -565,11 +583,12 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
    * +---------------+         | +------------------ | -+ |         +------------------- v ---+   |
    *                           | | package object foo#3 <-----(1)---- module class package#4  |   |
    *                           | +----------------------+ |         | +---------------------+ |   |
-   *                           +--------------------------+         | | class package$Bar#5 | |   |
+   *                           +--------------------------+         | | class package\$Bar#5 | |   |
    *                                                                | +----------------- | -+ |   |
    *                                                                +------------------- | ---+   |
    *                                                                                     |        |
    *                                                                                     +--------+
+   * </pre>
    * (1) sourceModule
    * (2) you get out of owners with .owner
    *
@@ -633,6 +652,8 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
           new DocTemplateImpl(bSym, inTpl) with Object {}
         else if (bSym.isTrait)
           new DocTemplateImpl(bSym, inTpl) with Trait {}
+        else if (bSym.isClass && bSym.asClass.baseClasses.contains(AnnotationClass))
+          new DocTemplateImpl(bSym, inTpl) with model.AnnotationClass {}
         else if (bSym.isClass || bSym == AnyRefClass)
           new DocTemplateImpl(bSym, inTpl) with Class {}
         else
@@ -680,7 +701,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
           }
       else {
         // no class inheritance at this point
-        assert(inOriginalOwner(bSym, inTpl), bSym + " in " + inTpl)
+        assert(inOriginalOwner(bSym, inTpl), s"$bSym in $inTpl")
         Some(createDocTemplate(bSym, inTpl))
       }
     }
@@ -813,7 +834,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     assert(modelFinished)
 
     def makeNoDocTemplate(aSym: Symbol, inTpl: TemplateImpl): NoDocTemplateImpl =
-      noDocTemplatesCache getOrElse (aSym, new NoDocTemplateImpl(aSym, inTpl))
+      noDocTemplatesCache.getOrElse(aSym, new NoDocTemplateImpl(aSym, inTpl))
 
     findTemplateMaybe(aSym) getOrElse {
       val bSym = normalizeTemplate(aSym)
@@ -1001,11 +1022,12 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     aSym.isModule && aSym.isJavaDefined &&
     aSym.info.members.exists(s => localShouldDocument(s) && (!s.isConstructor || s.owner == aSym))
 
-  def localShouldDocument(aSym: Symbol): Boolean =
-    !aSym.isPrivate && (aSym.isProtected || aSym.privateWithin == NoSymbol) && !aSym.isSynthetic
-
-  // the classes that are excluded from the index should also be excluded from the diagrams
-  def classExcluded(clazz: TemplateEntity): Boolean = settings.hardcoded.isExcluded(clazz.qualifiedName)
+  def localShouldDocument(aSym: Symbol): Boolean = {
+    // For `private[X]`, isPrivate is false (while for protected[X], isProtected is true)
+    def isPrivate = aSym.isPrivate || !aSym.isProtected && aSym.privateWithin != NoSymbol
+    // for private, only document if enabled in settings and not top-level
+    !aSym.isSynthetic && (!isPrivate || settings.visibilityPrivate.value && !aSym.isTopLevel)
+  }
 
   // the implicit conversions that are excluded from the pages should not appear in the diagram
   def implicitExcluded(convertorMethod: String): Boolean = settings.hiddenImplicits(convertorMethod)

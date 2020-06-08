@@ -8,9 +8,9 @@ import org.junit.runners.JUnit4
 
 import scala.tools.asm.Opcodes._
 import scala.tools.nsc.reporters.StoreReporter
-import scala.tools.partest.ASMConverters._
-import scala.tools.testing.BytecodeTesting
-import scala.tools.testing.BytecodeTesting._
+import scala.tools.testkit.ASMConverters._
+import scala.tools.testkit.BytecodeTesting
+import scala.tools.testkit.BytecodeTesting._
 
 
 @RunWith(classOf[JUnit4])
@@ -38,7 +38,7 @@ class IndySammyTest extends BytecodeTesting {
    */
   def test(from: String, to: String, arg: String, body: String => String = x => x)
           (expectedSig: String, lamBody: List[Instruction], appArgs: List[Instruction], ret: Instruction)
-          (allowMessage: StoreReporter#Info => Boolean = _ => false) = {
+          (allowMessage: StoreReporter.Info => Boolean = _ => false) = {
     val List(funClass, vcClass, vcCompanion) = compileClasses(s"${classPrologue(from, to)}")
     val c = compileClass(s"class C { ${lamDef(from, to, body)}; ${appDef(arg)} }", allowMessage = allowMessage)
 

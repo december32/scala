@@ -50,6 +50,8 @@ getSimpleName / getCanonicalName / isAnonymousClass / isLocalClass / isSynthetic
     will change some day).
 */
 
+import scala.tools.testkit.AssertUtil.assert8
+
 object Test {
 
   def tr[T](m: => T): String = try {
@@ -58,15 +60,14 @@ object Test {
     else r.toString
   } catch { case e: InternalError => e.getMessage }
 
-  def assertNotAnonymous(c: Class[_]) = {
-    val an = try {
+  def assertNotAnonymous(c: Class[_]) = assert8(!isAnonymous(c), s"$c is anonymous")
+  def isAnonymous(c: Class[_]) =
+    try {
       c.isAnonymousClass
     } catch {
       // isAnonymousClass is implemented using getSimpleName, which may throw.
       case e: InternalError => false
     }
-    assert(!an, c)
-  }
 
   def ruleMemberOrLocal(c: Class[_]) = {
     // if it throws, then it's because of the call from isLocalClass to isAnonymousClass.
@@ -85,7 +86,7 @@ object Test {
 
   def ruleScalaAnonClassIsLocal(c: Class[_]) = {
     if (c.getName contains "$anon$")
-      assert(c.isLocalClass, c)
+      assert8(c.isLocalClass, c)
   }
 
   def ruleScalaAnonFunInlineIsLocal(c: Class[_]) = {

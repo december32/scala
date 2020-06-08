@@ -1,16 +1,23 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package collection
 package mutable
 
+import scala.collection.generic.DefaultSerializable
 
 /** This class implements mutable sets using a hashtable.
  *  The iterator and all traversal methods of this class visit elements in the order they were inserted.
- *
- *  @author  Matthias Zenger
- *  @author  Martin Odersky
- *  @author  Pavel Pavlov
- *  @version 2.0, 31/12/2006
- *  @since   1
  *
  *  @tparam A     the type of the elements contained in this set.
  *
@@ -23,9 +30,15 @@ package mutable
  */
 class LinkedHashSet[A]
   extends AbstractSet[A]
-    with SetOps[A, LinkedHashSet, LinkedHashSet[A]] {
+    with SetOps[A, LinkedHashSet, LinkedHashSet[A]]
+    with StrictOptimizedIterableOps[A, LinkedHashSet, LinkedHashSet[A]]
+    with IterableFactoryDefaults[A, LinkedHashSet]
+    with DefaultSerializable  {
 
   override def iterableFactory: IterableFactory[LinkedHashSet] = LinkedHashSet
+
+  // stepper is not overridden to use XTableStepper because that stepper would not return the
+  // elements in insertion order
 
   type Entry = LinkedHashSet.Entry[A]
 
@@ -54,13 +67,25 @@ class LinkedHashSet[A]
       }
     }
 
-  def get(elem: A): Option[A] = {
-    val entry = table.findEntry(elem)
-    if (entry != null) Some(entry.key) else None
-  }
+  override def last: A =
+    if (size > 0) lastEntry.key
+    else throw new NoSuchElementException("Cannot call .last on empty LinkedHashSet")
+      
+  override def lastOption: Option[A] =
+    if (size > 0) Some(lastEntry.key)
+    else None
+
+  override def head: A =
+    if (size > 0) firstEntry.key
+    else throw new NoSuchElementException("Cannot call .head on empty LinkedHashSet")
+      
+  override def headOption: Option[A] =
+    if (size > 0) Some(firstEntry.key)
+    else None
 
   override def size: Int = table.tableSize
-
+  override def knownSize: Int = size
+  override def isEmpty: Boolean = size == 0
   def contains(elem: A): Boolean = table.findEntry(elem) ne null
 
   def addOne(elem: A): this.type = {
@@ -88,7 +113,7 @@ class LinkedHashSet[A]
   }
 
   def iterator: Iterator[A] = new AbstractIterator[A] {
-    private var cur = firstEntry
+    private[this] var cur = firstEntry
     def hasNext = cur ne null
     def next() =
       if (hasNext) { val res = cur.key; cur = cur.later; res }
@@ -119,12 +144,15 @@ class LinkedHashSet[A]
     table = newHashTable
     table.init(in, table.createNewEntry(in.readObject().asInstanceOf[A], null))
   }
+
+  override protected[this] def stringPrefix = "LinkedHashSet"
 }
 
 /** $factoryInfo
  *  @define Coll `LinkedHashSet`
  *  @define coll linked hash set
  */
+@SerialVersionUID(3L)
 object LinkedHashSet extends IterableFactory[LinkedHashSet] {
 
   override def empty[A]: LinkedHashSet[A] = new LinkedHashSet[A]
@@ -138,7 +166,6 @@ object LinkedHashSet extends IterableFactory[LinkedHashSet] {
   def newBuilder[A] = new GrowableBuilder(empty[A])
 
   /** Class for the linked hash set entry, used internally.
-   *  @since 2.10
    */
   private[mutable] final class Entry[A](val key: A) extends HashEntry[A, Entry[A]] {
     var earlier: Entry[A] = null

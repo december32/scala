@@ -1,3 +1,5 @@
+// scalac: -Werror
+
 // no unchecked warnings
 class View[C[A]] { }
 

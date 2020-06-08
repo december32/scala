@@ -29,8 +29,8 @@ chapter: 3
   Types             ::=  Type {‘,’ Type}
 ```
 
-We distinguish between first-order types and type constructors, which
-take type parameters and yield types. A subset of first-order types
+We distinguish between proper types and type constructors, which
+take type parameters and yield types. A subset of proper types
 called _value types_ represents sets of (first-class) values.
 Value types are either _concrete_ or _abstract_.
 
@@ -55,7 +55,7 @@ Non-value types capture properties of identifiers that
 [are not values](#non-value-types). For example, a
 [type constructor](#type-constructors) does not directly specify a type of
 values. However, when a type constructor is applied to the correct type
-arguments, it yields a first-order type, which may be a value type.
+arguments, it yields a proper type, which may be a value type.
 
 Non-value types are expressed indirectly in Scala. E.g., a method type is
 described by writing down a method signature, which in itself is not a real
@@ -125,9 +125,9 @@ A literal type `lit` is a special kind of singleton type which denotes the
 single literal value `lit`.  Thus, the type ascription `1: 1` gives the most
 precise type to the literal value `1`:  the literal type `1`.
 
-At run time, an expression `e` is considered to have literal type `lit` if `e ==
-lit`.  Concretely, the result of `e.isInstanceOf[lit]` and `e match { case _ :
-lit => }` is determined by evaluating `e == lit`.
+At run time, an expression `e` is considered to have literal type `lit` if `e == lit`.
+Concretely, the result of `e.isInstanceOf[lit]` and `e match { case _ : lit => }` is
+determined by evaluating `e == lit`.
 
 Literal types are available for all types for which there is dedicated syntax
 except `Unit`. This includes the numeric types (other than `Byte` and `Short`
@@ -216,7 +216,7 @@ class S[K <: String] { … }
 class G[M[ Z <: I ], I] { … }
 ```
 
-the following parameterized types are well formed:
+the following parameterized types are well-formed:
 
 ```scala
 TreeMap[I, String]
@@ -331,7 +331,7 @@ equivalent to `AnyRef` $\\{ R \\}$.
 
 ###### Example
 
-The following example shows how to declare and use a method which
+The following example shows how to declare and use a method which has
 a parameter type that contains a refinement with structural declarations.
 
 ```scala
@@ -507,7 +507,7 @@ is assumed. If an upper bound clause `<:$\,U$` is missing,
 existentially quantified type variable, where the existential quantification is
 implicit.
 
-A wildcard type must appear as type argument of a parameterized type.
+A wildcard type must appear as a type argument of a parameterized type.
 Let $T = p.c[\mathit{targs},T,\mathit{targs}']$ be a parameterized type where
 $\mathit{targs}, \mathit{targs}'$ may be empty and
 $T$ is a wildcard type `_$\;$>:$\,L\,$<:$\,U$`. Then $T$ is equivalent to the
@@ -685,7 +685,7 @@ An overloaded type consisting of type alternatives $T_1 \commadots T_n (n \geq 2
 
 ###### Example
 ```scala
-def println: Unit
+def println(): Unit
 def println(s: String): Unit = $\ldots$
 def println(x: Float): Unit = $\ldots$
 def println(x: Float, width: Int): Unit = $\ldots$
@@ -694,7 +694,7 @@ def println[A](x: A)(tostring: A => String): Unit = $\ldots$
 define a single function `println` which has an overloaded
 type.
 ```
-println:  => Unit $\overload$
+println:  () Unit $\overload$
           (String) Unit $\overload$
           (Float) Unit $\overload$
           (Float, Int) Unit $\overload$
@@ -853,7 +853,7 @@ The conformance relation $(<:)$ is the smallest transitive relation that satisfi
 - Conformance includes equivalence. If $T \equiv U$ then $T <: U$.
 - For every value type $T$, `scala.Nothing <: $T$ <: scala.Any`.
 - For every type constructor $T$ (with any number of type parameters), `scala.Nothing <: $T$ <: scala.Any`.
-- For every class type $T$ such that `$T$ <: scala.AnyRef` one has `scala.Null <: $T$`.
+- For every value type $T$, `scala.Null <: $T$` unless `$T$ <: scala.AnyVal`.
 - A type variable or abstract type $t$ conforms to its upper bound and
   its lower bound conforms to $t$.
 - A class type or parameterized type conforms to any of its base-types.
@@ -1027,7 +1027,7 @@ A compound type `$T_1$ with … with $T_n$ {$R\,$}`
 is volatile if one of the following two conditions hold.
 
 1. One of $T_2 , \ldots , T_n$ is a type parameter or abstract type, or
-1. $T_1$ is an abstract type and and either the refinement $R$
+1. $T_1$ is an abstract type and either the refinement $R$
    or a type $T_j$ for $j > 1$ contributes an abstract member
    to the compound type, or
 1. one of $T_1 , \ldots , T_n$ is a singleton type.

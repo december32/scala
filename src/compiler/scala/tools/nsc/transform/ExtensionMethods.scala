@@ -1,12 +1,21 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
+
 package scala.tools.nsc
 package transform
 
 import symtab._
 import Flags._
+import scala.annotation.tailrec
 import scala.collection.mutable
 
 /**
@@ -14,7 +23,6 @@ import scala.collection.mutable
  * methods in a value class, except parameter or super accessors, or constructors.
  *
  *  @author Martin Odersky
- *  @version 2.10
  */
 abstract class ExtensionMethods extends Transform with TypingTransformers {
 
@@ -27,37 +35,8 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
   def newTransformer(unit: CompilationUnit): Transformer =
     new Extender(unit)
 
-  /** Generate stream of possible names for the extension version of given instance method `imeth`.
-   *  If the method is not overloaded, this stream consists of just "extension$imeth".
-   *  If the method is overloaded, the stream has as first element "extensionX$imeth", where X is the
-   *  index of imeth in the sequence of overloaded alternatives with the same name. This choice will
-   *  always be picked as the name of the generated extension method.
-   *  After this first choice, all other possible indices in the range of 0 until the number
-   *  of overloaded alternatives are returned. The secondary choices are used to find a matching method
-   *  in `extensionMethod` if the first name has the wrong type. We thereby gain a level of insensitivity
-   *  of how overloaded types are ordered between phases and picklings.
-   */
-  private def extensionNames(imeth: Symbol): Stream[Name] = {
-    val decl = imeth.owner.info.decl(imeth.name)
-
-    // Bridge generation is done at phase `erasure`, but new scopes are only generated
-    // for the phase after that. So bridges are visible in earlier phases.
-    //
-    // `info.member(imeth.name)` filters these out, but we need to use `decl`
-    // to restrict ourselves to members defined in the current class, so we
-    // must do the filtering here.
-    val declTypeNoBridge = decl.filter(sym => !sym.isBridge).tpe
-
-    declTypeNoBridge match {
-      case OverloadedType(_, alts) =>
-        val index = alts indexOf imeth
-        assert(index >= 0, alts+" does not contain "+imeth)
-        def altName(index: Int) = newTermName(imeth.name+"$extension"+index)
-        altName(index) #:: ((0 until alts.length).toStream filter (index != _) map altName)
-      case tpe =>
-        assert(tpe != NoType, imeth.name+" not found in "+imeth.owner+"'s decls: "+imeth.owner.info.decls)
-        Stream(newTermName(imeth.name+"$extension"))
-    }
+  private def extensionName(name: Name): TermName = {
+    name.append("$extension").toTermName
   }
 
   private def companionModuleForce(sym: Symbol) = {
@@ -68,7 +47,7 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
   /** Return the extension method that corresponds to given instance method `meth`. */
   def extensionMethod(imeth: Symbol): Symbol = enteringPhase(currentRun.refchecksPhase) {
     val companionInfo = companionModuleForce(imeth.owner).info
-    val candidates = extensionNames(imeth) map (companionInfo.decl(_)) filter (_.exists)
+    val candidates = companionInfo.decl(extensionName(imeth.name)).alternatives
     val matching = candidates filter (alt => normalize(alt.tpe, imeth.owner) matches imeth.tpe)
     assert(matching.nonEmpty,
       sm"""|no extension method found for:
@@ -77,22 +56,20 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
            |
            | Candidates:
            |
-           | ${candidates.map(c => c.name+":"+c.tpe).mkString("\n")}
+           | ${candidates.map(c => s"${c.name}:${c.tpe}").mkString("\n")}
            |
            | Candidates (signatures normalized):
            |
-           | ${candidates.map(c => c.name+":"+normalize(c.tpe, imeth.owner)).mkString("\n")}
-           |
-           | Eligible Names: ${extensionNames(imeth).mkString(",")}" """)
+           | ${candidates.map(c => s"${c.name}:${normalize(c.tpe, imeth.owner)}").mkString("\n")}" """)
     matching.head
   }
 
   /** Recognize a MethodType which represents an extension method.
    *
-   *  It may have a curried parameter list with the `$this` alone in the first
+   *  It may have a curried parameter list with the `\$this` alone in the first
    *  parameter list, in which case that parameter list is dropped.  Or, since
    *  the curried lists disappear during uncurry, it may have a single parameter
-   *  list with `$this` as the first parameter, in which case that parameter is
+   *  list with `\$this` as the first parameter, in which case that parameter is
    *  removed from the list.
    */
   object ExtensionMethodType {
@@ -104,9 +81,9 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
     }
   }
 
-  /** This method removes the `$this` argument from the parameter list a method.
+  /** This method removes the `\$this` argument from the parameter list a method.
    *
-   *  A method may be a `PolyType`, in which case we tear out the `$this` and the class
+   *  A method may be a `PolyType`, in which case we tear out the `\$this` and the class
    *  type params from its nested `MethodType`.  Or it may be a MethodType, as
    *  described at the ExtensionMethodType extractor.
    */
@@ -125,7 +102,8 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
   class Extender(unit: CompilationUnit) extends TypingTransformer(unit) {
     private val extensionDefs = mutable.Map[Symbol, mutable.ListBuffer[Tree]]()
 
-    def checkNonCyclic(pos: Position, seen: Set[Symbol], clazz: Symbol): Unit =
+    @tailrec
+    final def checkNonCyclic(pos: Position, seen: Set[Symbol], clazz: Symbol): Unit =
       if (seen contains clazz)
         reporter.error(pos, "value class may not unbox to itself")
       else {
@@ -142,7 +120,7 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
     *      def baz[B >: A](x: B): List[B] = x :: xs
     *      // baz has to be transformed into this extension method, where
     *      // A is cloned from class Foo and  B is cloned from method baz:
-    *      // def extension$baz[B >: A <: Any, A >: Nothing <: AnyRef]($this: Foo[A])(x: B): List[B]
+    *      // def extension\$baz[B >: A <: Any, A >: Nothing <: AnyRef](\$this: Foo[A])(x: B): List[B]
     *    }
     *
     *  TODO: factor out the logic for consolidating type parameters from a class
@@ -155,19 +133,20 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
       // so must drop their variance.
       val tparamsFromClass = cloneSymbolsAtOwner(clazz.typeParams, extensionMeth) map (_ resetFlag COVARIANT | CONTRAVARIANT)
 
-      val thisParamType = appliedType(clazz, tparamsFromClass map (_.tpeHK): _*)
+      val thisParamType = appliedType(clazz, tparamsFromClass.map(_.tpeHK))
       val thisParam     = extensionMeth.newValueParameter(nme.SELF, extensionMeth.pos) setInfo thisParamType
       val resultType    = MethodType(List(thisParam), dropNullaryMethod(methodResult))
       val selfParamType = singleType(currentOwner.companionModule.thisType, thisParam)
 
-      def fixres(tp: Type)    = tp substThisAndSym (clazz, selfParamType, clazz.typeParams, tparamsFromClass)
-      def fixtparam(tp: Type) = tp substSym (clazz.typeParams, tparamsFromClass)
+      def fixres(tp: Type)    = tp.substThisAndSym(clazz, selfParamType, clazz.typeParams, tparamsFromClass)
+      def fixtparam(tp: Type) = tp.substSym(clazz.typeParams, tparamsFromClass)
 
       // We can't substitute symbols on the entire polytype because we
       // need to modify the bounds of the cloned type parameters, but we
       // don't want to substitute for the cloned type parameters themselves.
       val tparams = tparamsFromMethod ::: tparamsFromClass
-      GenPolyType(tparams map (_ modifyInfo fixtparam), fixres(resultType))
+      tparams.foreach(_ modifyInfo fixtparam)
+      GenPolyType(tparams, fixres(resultType))
 
       // For reference, calling fix on the GenPolyType plays out like this:
       // error: scala.reflect.internal.Types$TypeError: type arguments [B#7344,A#6966]
@@ -205,11 +184,14 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
           val companion     = origThis.companionModule
 
           def makeExtensionMethodSymbol = {
-            val extensionName = extensionNames(origMeth).head.toTermName
             val extensionMeth = (
-              companion.moduleClass.newMethod(extensionName, tree.pos.focus, origMeth.flags & ~OVERRIDE & ~PROTECTED & ~PRIVATE & ~LOCAL | FINAL)
+              companion.moduleClass.newMethod(extensionName(origMeth.name), tree.pos.focus, origMeth.flags & ~OVERRIDE & ~PROTECTED & ~PRIVATE & ~LOCAL | FINAL)
                 setAnnotations origMeth.annotations
             )
+            defineOriginalOwner(extensionMeth, origMeth.owner)
+            // @strictfp on class means strictfp on all methods, but `setAnnotations` won't copy it
+            if (origMeth.isStrictFP && !extensionMeth.hasAnnotation(ScalaStrictFPAttr))
+              extensionMeth.addAnnotation(ScalaStrictFPAttr)
             origMeth.removeAnnotation(TailrecClass) // it's on the extension method, now.
             companion.info.decls.enter(extensionMeth)
           }
@@ -229,7 +211,7 @@ abstract class ExtensionMethods extends Transform with TypingTransformers {
               .substituteSymbols(origTpeParams, extensionTpeParams)
               .substituteSymbols(origParams, extensionParams)
               .substituteThis(origThis, extensionThis)
-              .changeOwner(origMeth -> extensionMeth)
+              .changeOwner(origMeth, extensionMeth)
             new SubstututeRecursion(origMeth, extensionMeth, unit).transform(tree)
           }
           val castBody =

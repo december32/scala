@@ -1,22 +1,26 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2002-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala
 package runtime
 
-import scala.collection.{ AbstractIterator, AnyConstr, SortedOps, StrictOptimizedIterableOps, StringOps, StringView, View }
-import scala.collection.generic.IsIterableLike
-import scala.collection.immutable.{ NumericRange, ArraySeq }
+import scala.collection.{AbstractIterator, AnyConstr, SortedOps, StrictOptimizedIterableOps, StringOps, StringView, View}
+import scala.collection.generic.IsIterable
+import scala.collection.immutable.{ArraySeq, NumericRange}
 import scala.collection.mutable.StringBuilder
-import scala.reflect.{ ClassTag, classTag }
-import java.lang.{ Class => jClass }
-
-import java.lang.reflect.{ Method => JMethod }
+import scala.math.min
+import scala.reflect.{ClassTag, classTag}
+import java.lang.{Class => jClass}
+import java.lang.reflect.{Method => JMethod}
 
 /** The object ScalaRunTime provides support methods required by
  *  the scala runtime.  All these methods should be considered
@@ -30,8 +34,8 @@ object ScalaRunTime {
     clazz.isArray && (atLevel == 1 || isArrayClass(clazz.getComponentType, atLevel - 1))
 
   // A helper method to make my life in the pattern matcher a lot easier.
-  def drop[Repr](coll: Repr, num: Int)(implicit iterable: IsIterableLike[Repr]): Repr =
-    iterable conversion coll drop num
+  def drop[Repr](coll: Repr, num: Int)(implicit iterable: IsIterable[Repr] { type C <: Repr }): Repr =
+    iterable(coll) drop num
 
   /** Return the class object representing an array with element class `clazz`.
    */
@@ -83,20 +87,10 @@ object ScalaRunTime {
   }
 
   /** Get generic array length */
-  def array_length(xs: AnyRef): Int = xs match {
-    case x: Array[AnyRef]  => x.length
-    case x: Array[Int]     => x.length
-    case x: Array[Double]  => x.length
-    case x: Array[Long]    => x.length
-    case x: Array[Float]   => x.length
-    case x: Array[Char]    => x.length
-    case x: Array[Byte]    => x.length
-    case x: Array[Short]   => x.length
-    case x: Array[Boolean] => x.length
-    case x: Array[Unit]    => x.length
-    case null => throw new NullPointerException
-  }
+  @inline def array_length(xs: AnyRef): Int = java.lang.reflect.Array.getLength(xs)
 
+  // TODO: bytecode Object.clone() will in fact work here and avoids
+  // the type switch. See Array_clone comment in BCodeBodyBuilder.
   def array_clone(xs: AnyRef): AnyRef = xs match {
     case x: Array[AnyRef]  => x.clone()
     case x: Array[Int]     => x.clone()
@@ -107,7 +101,6 @@ object ScalaRunTime {
     case x: Array[Byte]    => x.clone()
     case x: Array[Short]   => x.clone()
     case x: Array[Boolean] => x.clone()
-    case x: Array[Unit]    => x
     case null => throw new NullPointerException
   }
 
@@ -115,24 +108,47 @@ object ScalaRunTime {
    *  Needed to deal with vararg arguments of primitive types that are passed
    *  to a generic Java vararg parameter T ...
    */
-  def toObjectArray(src: AnyRef): Array[Object] = src match {
-    case x: Array[AnyRef] => x
-    case _ =>
-      val length = array_length(src)
-      val dest = new Array[Object](length)
-      for (i <- 0 until length)
-        array_update(dest, i, array_apply(src, i))
-      dest
+  def toObjectArray(src: AnyRef): Array[Object] = {
+    def copy[@specialized T <: AnyVal](src: Array[T]): Array[Object] = {
+      val length = src.length
+      if (length == 0) Array.emptyObjectArray
+      else {
+        val dest = new Array[Object](length)
+        var i = 0
+        while (i < length) {
+          dest(i) = src(i).asInstanceOf[AnyRef]
+          i += 1
+        }
+        dest
+      }
+    }
+    src match {
+      case x: Array[AnyRef]  => x
+      case x: Array[Int]     => copy(x)
+      case x: Array[Double]  => copy(x)
+      case x: Array[Long]    => copy(x)
+      case x: Array[Float]   => copy(x)
+      case x: Array[Char]    => copy(x)
+      case x: Array[Byte]    => copy(x)
+      case x: Array[Short]   => copy(x)
+      case x: Array[Boolean] => copy(x)
+      case x: Array[Unit]    => copy(x)
+      case null => throw new NullPointerException
+    }
   }
 
   def toArray[T](xs: scala.collection.Seq[T]) = {
-    val arr = new Array[AnyRef](xs.length)
-    var i = 0
-    for (x <- xs) {
-      arr(i) = x.asInstanceOf[AnyRef]
-      i += 1
+    if (xs.isEmpty) Array.emptyObjectArray
+    else {
+      val arr = new Array[AnyRef](xs.length)
+      val it = xs.iterator
+      var i = 0
+      while (it.hasNext) {
+        arr(i) = it.next().asInstanceOf[AnyRef]
+        i += 1
+      }
+      arr
     }
-    arr
   }
 
   // Java bug: https://bugs.java.com/view_bug.do?bug_id=4071957
@@ -147,8 +163,8 @@ object ScalaRunTime {
   /** A helper for case classes. */
   def typedProductIterator[T](x: Product): Iterator[T] = {
     new AbstractIterator[T] {
-      private var c: Int = 0
-      private val cmax = x.productArity
+      private[this] var c: Int = 0
+      private[this] val cmax = x.productArity
       def hasNext = c < cmax
       def next() = {
         val result = x.productElement(c)
@@ -223,7 +239,7 @@ object ScalaRunTime {
     // Special casing Unit arrays, the value class which uses a reference array type.
     def arrayToString(x: AnyRef) = {
       if (x.getClass.getComponentType == classOf[BoxedUnit])
-        0 until (array_length(x) min maxElements) map (_ => "()") mkString ("Array(", ", ", ")")
+        (0 until min(array_length(x), maxElements)).map(_ => "()").mkString("Array(", ", ", ")")
       else
         x.asInstanceOf[Array[_]].iterator.take(maxElements).map(inner).mkString("Array(", ", ", ")")
     }
@@ -238,10 +254,10 @@ object ScalaRunTime {
       case x: String                    => if (x.head.isWhitespace || x.last.isWhitespace) "\"" + x + "\"" else x
       case x if useOwnToString(x)       => x.toString
       case x: AnyRef if isArray(x)      => arrayToString(x)
-      case x: scala.collection.Map[_, _] => x.iterator take maxElements map mapInner mkString (x.className + "(", ", ", ")")
-      case x: Iterable[_]               => x.iterator take maxElements map inner mkString (x.className + "(", ", ", ")")
+      case x: scala.collection.Map[_, _] => x.iterator.take(maxElements).map(mapInner).mkString(x.collectionClassName + "(", ", ", ")")
+      case x: Iterable[_]               => x.iterator.take(maxElements).map(inner).mkString(x.collectionClassName + "(", ", ", ")")
       case x: Product1[_] if isTuple(x) => "(" + inner(x._1) + ",)" // that special trailing comma
-      case x: Product if isTuple(x)     => x.productIterator map inner mkString ("(", ",", ")")
+      case x: Product if isTuple(x)     => x.productIterator.map(inner).mkString("(", ",", ")")
       case x                            => x.toString
     }
 
@@ -254,12 +270,12 @@ object ScalaRunTime {
   }
 
   /** stringOf formatted for use in a repl result. */
-  def replStringOf(arg: Any, maxElements: Int): String = {
-    val s  = stringOf(arg, maxElements)
-    val nl = if (s contains "\n") "\n" else ""
-
-    nl + s + "\n"
-  }
+  def replStringOf(arg: Any, maxElements: Int): String =
+    stringOf(arg, maxElements) match {
+      case null => "null toString"
+      case s if s.indexOf('\n') >= 0 => "\n" + s + "\n"
+      case s => s + "\n"
+    }
 
   // Convert arrays to immutable.ArraySeq for use with Java varargs:
   def genericWrapArray[T](xs: Array[T]): ArraySeq[T] =

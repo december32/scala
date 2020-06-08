@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
@@ -120,6 +127,8 @@ private[util] trait InternalPositionImpl {
   def isOpaqueRange              = isRange && !isTransparent
   def pointOrElse(alt: Int): Int = if (isDefined) point else alt
   def makeTransparent: Position  = if (isOpaqueRange) Position.transparent(source, start, point, end) else this
+  final def makeTransparentIf(cond: Boolean): Position =
+    if (cond && isOpaqueRange) Position.transparent(source, start, point, end) else this
 
   /** Copy a range position with a changed value.
    */
@@ -143,7 +152,7 @@ private[util] trait InternalPositionImpl {
    *    |^  means union, taking the point of the rhs
    *    ^|  means union, taking the point of the lhs
    */
-  def |(that: Position, poses: Position*): Position = poses.foldLeft(this | that)(_ | _)
+  //def |(that: Position, poses: Position*): Position = poses.foldLeft(this | that)(_ | _)
   def |(that: Position): Position                   = this union that
   def ^(point: Int): Position                       = this withPoint point
   def |^(that: Position): Position                  = (this | that) ^ that.point

@@ -1,3 +1,5 @@
+// scalac: -feature -Werror
+//
 class A
 class B[T](x: T)
 case class C(a: A, b: B[_])

@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Paul Phillips
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
@@ -9,6 +16,7 @@ package internal
 package pickling
 
 import PickleFormat._
+import scala.annotation.tailrec
 import util.shortClassOfInstance
 
 trait Translations {
@@ -30,7 +38,7 @@ trait Translations {
   // truly terrible idea. It reaches the height of its powers in
   // combination with scala's insistence on helpfully tupling
   // multiple arguments passed to a single-arg AnyRef.
-  def picklerTag(ref: AnyRef): Int = ref match {
+  final def picklerTag(ref: AnyRef): Int = ref match {
     case tp: Type                       => picklerTag(tp)
     case sym: Symbol                    => picklerTag(sym)
     case const: Constant                => LITERAL + const.tag
@@ -61,7 +69,8 @@ trait Translations {
     case _: TermSymbol                       => VALsym
   }
 
-  def picklerTag(tpe: Type): Int = tpe match {
+  @tailrec
+  final def picklerTag(tpe: Type): Int = tpe match {
     case NoType                        => NOtpe
     case NoPrefix                      => NOPREFIXtpe
     case _: ThisType                   => THIStpe

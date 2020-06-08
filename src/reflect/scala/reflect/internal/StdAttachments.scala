@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect
 package internal
@@ -52,8 +64,6 @@ trait StdAttachments {
     * @param samTp the expected type that triggered sam conversion (may be a subtype of the type corresponding to sam's owner)
     * @param sam the single abstract method implemented by the Function we're attaching this to
     * @param synthCls the (synthetic) class representing the eventual implementation class (spun at runtime by LMF on the JVM)
-    *
-    * @since 2.12.0-M4
     */
   case class SAMFunction(samTp: Type, sam: Symbol, synthCls: Symbol) extends PlainAttachment
 
@@ -107,4 +117,11 @@ trait StdAttachments {
   case object KnownDirectSubclassesCalled extends PlainAttachment
 
   class QualTypeSymAttachment(val sym: Symbol)
+
+  case object ConstructorNeedsFence extends PlainAttachment
+
+  /** Mark the syntax for linting purposes. */
+  case object MultiargInfixAttachment extends PlainAttachment
+
+  case object NullaryOverrideAdapted extends PlainAttachment
 }

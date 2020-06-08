@@ -4,22 +4,23 @@
 import scala.collection._
 import scala.language.postfixOps
 
+@deprecated("Tests deprecated API", since="2.13.0")
 object Test extends App {
 
   def orderedTraversableTest(empty: Traversable[Int]): Unit = {
     println("new test starting with "+empty)
     assert(empty.isEmpty)
     val ten = empty ++ List(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-    println(ten.size+": "+ten)
-    println(ten.tail.size+": "+ten.tail)
+    println(s"${ten.size}: $ten")
+    println(s"${ten.tail.size}: ${ten.tail}")
     assert(ten == empty ++ (1 to 10))
     assert(ten.size == 10)
     assert(ten forall (_ <= 10))
     assert(ten exists (_ == 5))
     assert((ten count (_ % 2 == 0)) == 5)
     assert((ten find (_ % 2 == 0)) == Some(2))
-    assert((0 /: ten)(_ + _) == 55)
-    assert((ten :\ 0)(_ + _) == 55)
+    assert(ten.foldLeft(0)(_ + _) == 55)
+    assert(ten.foldRight(0)(_ + _) == 55)
     println(ten.head)
     val x = ten reduceLeft (_ + _)
     assert(x == 55, x)
@@ -43,16 +44,16 @@ object Test extends App {
     assert(ten.last == 10)
     assert(List(ten.head) ++ ten.tail == ten)
     assert(ten.init ++ List(ten.last) == ten, ten.init)
-    assert(vs1 == vs2, vs1+"!="+vs2)
+    assert(vs1 == vs2, s"$vs1!=$vs2")
     assert(vs1 == ten)
     assert((ten take 5) == firstFive)
     assert((ten drop 5) == secondFive)
-    assert(ten slice (3, 3) isEmpty)
-    assert((ten slice (3, 6)) == List(4, 5, 6), ten slice (3, 6))
+    assert(ten.slice(3, 3).isEmpty)
+    assert((ten.slice(3, 6)) == List(4, 5, 6), ten.slice(3, 6))
     assert((ten takeWhile (_ <= 5)) == firstFive)
     assert((ten dropWhile (_ <= 5)) == secondFive)
-    assert((ten span (_ <= 5)) == (firstFive, secondFive))
-    assert((ten splitAt 5) == (firstFive, secondFive), ten splitAt 5)
+    assert(ten.span(_ <= 5) == ((firstFive, secondFive)))
+    assert(ten.splitAt(5) == ((firstFive, secondFive)), ten.splitAt(5))
     val buf = new mutable.ArrayBuffer[Int]
     buf ++= firstFive
     buf ++= secondFive
@@ -73,7 +74,7 @@ object Test extends App {
     assert(six.iterator.toStream == six)
     assert(six.takeRight(4) == List(3, 4, 5, 6), six.takeRight(4))
     assert(six.dropRight(3) == List(1, 2, 3))
-    assert(six sameElements (1 to 6))
+    assert(six.iterator.sameElements(1 to 6))
   }
 
   def sequenceTest(empty: Seq[Int]): Unit = {
@@ -185,10 +186,10 @@ object Test extends App {
     assert(m.keySet.size == 26)
     assert(m.size == 26)
     assert(m.keySet == Set() ++ m.keysIterator.to(LazyList))
-    assert(m.keySet == m.keysIterator.toList.toSet, m.keySet.toList+"!="+m.keysIterator.toList.toSet)
+    assert(m.keySet == m.keysIterator.toList.toSet, s"${m.keySet.toList}!=${m.keysIterator.toList.toSet}")
     val m1 = empty ++ m
     val ks = m.keySet
-    val mm = m.filterKeys(k => !ks(k))
+    val mm = m.view.filterKeys(k => !ks(k))
     assert(mm.isEmpty, mm)
     def m3 = empty ++ m1
     assert(m1 == m3)
@@ -200,7 +201,7 @@ object Test extends App {
   def mutableMapTest(empty: => mutable.Map[String, String]) = {
     mapTest(empty)
     val m1 = empty ++ (('A' to 'Z') map (_.toString) map (x => (x, x)))
-    val m2 = m1 retain ((k, v) => k == "N")
+    val m2 = m1 filterInPlace ((k, v) => k == "N")
     assert(m2.size == 1, m2)
   }
 

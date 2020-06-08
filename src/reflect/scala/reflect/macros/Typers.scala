@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect
 package macros
@@ -108,7 +120,7 @@ trait Typers {
    *  are observationally different from typed trees (also known as typer trees, typechecked trees or attributed trees),
    *
    *  Usually, if some compiler API takes a tree, then both untyped and typed trees will do. However in some cases,
-   *  only untyped or only typed trees are appropriate. For example, [[eval]] only accepts untyped trees and one can only splice
+   *  only untyped or only typed trees are appropriate. For example, [[Evals.eval]] only accepts untyped trees and one can only splice
    *  typed trees inside typed trees. Therefore in the current reflection API, there is a need in functions
    *  that go back and forth between untyped and typed trees. For this we have [[typecheck]] and `untypecheck`.
    *

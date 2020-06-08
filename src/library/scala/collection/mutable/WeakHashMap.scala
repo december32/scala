@@ -1,26 +1,28 @@
-/*                     __                                               *\
-**     ________ ___   / /  ___     Scala API                            **
-**    / __/ __// _ | / /  / _ |    (c) 2003-2013, LAMP/EPFL             **
-**  __\ \/ /__/ __ |/ /__/ __ |    http://scala-lang.org/               **
-** /____/\___/_/ |_/____/_/ | |                                         **
-**                          |/                                          **
-\*                                                                      */
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
 
 package scala
 package collection
 package mutable
 
-import generic._
-import convert.Wrappers._
+import scala.collection.convert.JavaCollectionWrappers.{JMapWrapper, JMapWrapperLike}
 
 /** A hash map with references to entries which are weakly reachable. Entries are
  *  removed from this map when the key is no longer (strongly) referenced. This class wraps
  *  `java.util.WeakHashMap`.
  *
- *  @tparam A      type of keys contained in this map
- *  @tparam B      type of values associated with the keys
+ *  @tparam K      type of keys contained in this map
+ *  @tparam V      type of values associated with the keys
  *
- *  @since 2.8
  *  @see [[http://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#weak-hash-maps "Scala's Collection Library overview"]]
  *  section on `Weak Hash Maps` for more information.
  *
@@ -29,16 +31,20 @@ import convert.Wrappers._
  *  @define mayNotTerminateInf
  *  @define willNotTerminateInf
  */
-class WeakHashMap[A, B] extends JMapWrapper[A, B](new java.util.WeakHashMap)
-    with JMapWrapperLike[A, B, WeakHashMap, WeakHashMap[A, B]] {
-  override def empty = new WeakHashMap[A, B]
+@SerialVersionUID(3L)
+class WeakHashMap[K, V] extends JMapWrapper[K, V](new java.util.WeakHashMap)
+    with JMapWrapperLike[K, V, WeakHashMap, WeakHashMap[K, V]]
+    with MapFactoryDefaults[K, V, WeakHashMap, Iterable] {
+  override def empty = new WeakHashMap[K, V]
   override def mapFactory: MapFactory[WeakHashMap] = WeakHashMap
+  override protected[this] def stringPrefix = "WeakHashMap"
 }
 
 /** $factoryInfo
  *  @define Coll `WeakHashMap`
  *  @define coll weak hash map
  */
+@SerialVersionUID(3L)
 object WeakHashMap extends MapFactory[WeakHashMap] {
   def empty[K, V]: WeakHashMap[K,V] = new WeakHashMap[K, V]
   def from[K, V](it: collection.IterableOnce[(K, V)]): WeakHashMap[K,V] = Growable.from(empty[K, V], it)

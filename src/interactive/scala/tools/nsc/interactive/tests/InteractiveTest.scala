@@ -1,7 +1,15 @@
-/* NSC -- new Scala compiler
- * Copyright 2009-2013 Typesafe/Scala Solutions and LAMP/EPFL
- * @author Martin Odersky
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
+
 package scala.tools.nsc
 package interactive
 package tests
@@ -38,9 +46,6 @@ import scala.collection.mutable.ListBuffer
  *  framework will automatically pick it up.
  *
  *  @see   Check existing tests under test/files/presentation
- *
- *  @author Iulian Dragos
- *  @author Mirco Dotta
  */
 abstract class InteractiveTest
   extends AskParse
@@ -67,12 +72,10 @@ abstract class InteractiveTest
   /** Add new presentation compiler actions to test. Presentation compiler's test
    *  need to extends trait `PresentationCompilerTestDef`.
    */
-  protected def ++(tests: PresentationCompilerTestDef*) {
-    testActions ++= tests
-  }
+  protected def ++(tests: PresentationCompilerTestDef*): Unit = testActions ++= tests
 
   /** Test's entry point */
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     try execute()
     finally askShutdown()
   }
@@ -83,25 +86,25 @@ abstract class InteractiveTest
         loadSources()
         runDefaultTests()
       }
-    }.lines.map(normalize).foreach(println)
+    }.linesIterator.map(normalize).foreach(println)
   }
 
   protected def normalize(s: String) = s
 
   /** Load all sources before executing the test. */
-  protected def loadSources() {
+  protected def loadSources(): Unit = {
     // ask the presentation compiler to track all sources. We do
     // not wait for the file to be entirely typed because we do want
     // to exercise the presentation compiler on scoped type requests.
-    askReload(sourceFiles)
+    askReload(sourceFiles.toIndexedSeq)
     // make sure all sources are parsed before running the test. This
     // is because test may depend on the sources having been parsed at
     // least once
-    askParse(sourceFiles)
+    askParse(sourceFiles.toIndexedSeq)
   }
 
   /** Run all defined `PresentationCompilerTestDef` */
-  protected def runDefaultTests() {
+  protected def runDefaultTests(): Unit = {
     //TODO: integrate random tests!, i.e.: if (runRandomTests) randomTests(20, sourceFiles)
     testActions.foreach(_.runTest())
   }

@@ -3,7 +3,7 @@ import java.io.{Console => _, _}
 
 object Test extends DirectTest {
 
-  override def extraSettings: String = "-usejavacp -Xprint:patmat -Xprint-pos -d " + testOutput.path
+  override def extraSettings: String = "-usejavacp -Vprint:patmat -Vprint-pos -d " + testOutput.path
 
   override def code =
     """
@@ -28,7 +28,13 @@ object Test extends DirectTest {
       |    case Case4() => ()
       |  }
       |}
+      |object Case6 {
+      |  def unapply(z: Int): Option[Int] = Some(-1)
       |
+      |  0 match {
+      |    case Case6(nr) => ()
+      |  }
+      |}
       |""".stripMargin.trim
 
   override def show(): Unit = {

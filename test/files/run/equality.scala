@@ -3,31 +3,31 @@ object Test
 {
   def hash(x: Any): Int = x.## // forces upcast to Any
 
-  def makeFromInt(x: Int) = List(
+  def makeFromInt(x: Int) = List[Any](
     x.toByte, x.toShort, x.toInt, x.toLong, x.toFloat, x.toDouble, BigInt(x), BigDecimal(x)
   ) ::: (
     if (x < 0) Nil else List(x.toChar)
   )
-  def makeFromDouble(x: Double) = List(
+  def makeFromDouble(x: Double) = List[Any](
     x.toShort, x.toInt, x.toLong, x.toFloat, x.toDouble, BigInt(x.toInt), BigDecimal(x)
   )
 
   def main(args: Array[String]): Unit = {
     var xs = makeFromInt(5)
     for (x <- xs ; y <- xs) {
-      assert(x == y, x + " == " + y)
+      assert(x == y, s"$x == $y")
       assert(hash(x) == hash(y), "hash(%s) == hash(%s)".format(x, y))
     }
 
     xs = makeFromInt(-5)
     for (x <- xs ; y <- xs) {
-      assert(x == y, x + " == " + y)
+      assert(x == y, s"$x == $y")
       assert(hash(x) == hash(y), "hash(%s) == hash(%s)".format(x, y))
     }
 
     xs = makeFromDouble(500.0)
     for (x <- xs ; y <- xs) {
-      assert(x == y, x + " == " + y)
+      assert(x == y, s"$x == $y")
       assert(hash(x) == hash(y), "hash(%s) == hash(%s)".format(x, y))
     }
 

@@ -1,5 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
@@ -10,8 +18,6 @@ import scala.collection.mutable
 
 /**
  * An in-memory directory.
- *
- * @author Lex Spoon
  *
  * ''Note:  This library is considered experimental and should not be used unless you know what you are doing.''
  */
@@ -35,17 +41,17 @@ extends AbstractFile {
   override def output = throw new IllegalStateException("directories cannot be written")
 
   /** Does this abstract file denote an existing file? */
-  def create() { unsupported() }
+  def create(): Unit = { unsupported() }
 
   /** Delete the underlying file or directory (recursively). */
-  def delete() { unsupported() }
+  def delete(): Unit = { unsupported() }
 
   /** Returns an abstract file with the given name. It does not
    *  check that it exists.
    */
   def lookupNameUnchecked(name: String, directory: Boolean): AbstractFile = unsupported()
 
-  private val files = mutable.Map.empty[String, AbstractFile]
+  private[this] val files = mutable.Map.empty[String, AbstractFile]
 
   // the toList is so that the directory may continue to be
   // modified while its elements are iterated
@@ -68,7 +74,7 @@ extends AbstractFile {
       dir
     }
 
-  def clear() {
+  def clear(): Unit = {
     files.clear()
   }
 }

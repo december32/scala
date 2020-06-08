@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala
 package reflect
 package macros
@@ -34,12 +46,21 @@ abstract class Attachments { self =>
   /** The underlying payload with the guarantee that no two elements have the same type. */
   def all: Set[Any] = Set.empty
 
-  private def matchesTag[T: ClassTag](datum: Any) =
-    classTag[T].runtimeClass.isInstance(datum)
+  private def matchesTag[T: ClassTag]: (Any => Boolean) = {
+    // OPT: avoid lambda allocation for each call to `remove`, etc.
+    Attachments.matchesTagCache.get(classTag[T].runtimeClass)
+  }
 
   /** An underlying payload of the given class type `T`. */
-  def get[T: ClassTag]: Option[T] =
-    (all find matchesTag[T]).asInstanceOf[Option[T]]
+  def get[T: ClassTag]: Option[T] = {
+    val it = all.iterator
+    val matchesTagFn = matchesTag[T]
+    while (it.hasNext) { // OPT: hotspot, hand roll `Set.find`.
+      val datum = it.next()
+      if (matchesTagFn(datum)) return Some(datum.asInstanceOf[T])
+    }
+    None
+  }
 
   /** Check underlying payload contains an instance of type `T`. */
   def contains[T: ClassTag]: Boolean =
@@ -53,12 +74,22 @@ abstract class Attachments { self =>
 
   /** Creates a copy of this attachment with the payload of the given class type `T` removed. */
   def remove[T: ClassTag]: Attachments { type Pos = self.Pos } = {
-    val newAll = all filterNot matchesTag[T]
-    if (newAll.isEmpty) pos.asInstanceOf[Attachments { type Pos = self.Pos }]
-    else new NonemptyAttachments[Pos](this.pos, newAll)
+    if (!all.exists(matchesTag[T])) this // OPT immutable.Set.filter doesn't structurally share on 2.12 collections.
+    else {
+      val newAll = all filterNot matchesTag[T]
+      if (newAll.isEmpty) pos.asInstanceOf[Attachments { type Pos = self.Pos }]
+      else new NonemptyAttachments[Pos](this.pos, newAll)
+    }
   }
 
   def isEmpty: Boolean = true
+  def cloneAttachments: Attachments { type Pos = self.Pos } = this
+}
+
+private object Attachments {
+  private val matchesTagCache = new ClassValue[Function1[Any, Boolean]] {
+    override def computeValue(cls: Class[_]): Function[Any, Boolean] = cls.isInstance(_)
+  }
 }
 
 // scala/bug#7018: This used to be an inner class of `Attachments`, but that led to a memory leak in the
@@ -67,4 +98,5 @@ private final class NonemptyAttachments[P >: Null](override val pos: P, override
   type Pos = P
   def withPos(newPos: Pos) = new NonemptyAttachments(newPos, all)
   override def isEmpty: Boolean = false
+  override def cloneAttachments: Attachments { type Pos = P } = new NonemptyAttachments[P](pos, all)
 }

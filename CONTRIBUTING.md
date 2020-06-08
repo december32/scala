@@ -22,7 +22,7 @@ You don't need to submit separate PRs for 2.12.x and 2.13.x. Any change accepted
 
 ### Documentation
 
-Whether you finally decided you couldn't stand that annoying typo anymore, you fixed the outdated code sample in some comment, or you wrote a nice, comprehensive, overview for an under-documented package, some docs for a class or the specifics about a method, your documentation improvement is very much appreciated, and we will do our best to fasttrack it.
+Whether you finally decided you couldn't stand that annoying typo anymore, you fixed the outdated code sample in some comment, or you wrote a nice, comprehensive, overview for an under-documented package, some docs for a class or the specifics about a method, your documentation improvement is very much appreciated, and we will do our best to fast-track it.
 
 You can make these changes directly in your browser in GitHub, or follow the same process as for code. Up to you!
 
@@ -36,13 +36,15 @@ The kind of code we can accept depends on the life cycle for the release you're 
 
 #### Bug Fix
 
-At the end of the commit message, include "Fixes scala/bug#NNNN", where https://github.com/scala/bug/issues/NNNN tracks the bug you're fixing. We also recommend naming your branch after the ticket number.
+At the end of the PR description, which is autofilled with the commit message if there is only one commit, add the phrase, "Fixes scala/bug#NNNN", where `https://github.com/scala/bug/issues/NNNN` tracks the bug you're fixing. Github will turn your bug number into a link.
+
+We also recommend naming your branch after the ticket number.
 
 Please make sure the ticket's milestone corresponds to the upcoming milestone for the branch your PR targets. The CI automation will automatically assign the milestone after you open the PR.
 
 #### Enhancement or New Feature
 
-For longer-running development, likely required for this category of code contributions, we suggest you include `topic/` or `wip/` in your branch name, to indicate that this is work in progress, and that others should be prepared to rebase if they branch off your branch.
+For longer-running development, likely required for this category of code contributions, we suggest you include `topic/` or `wip/` in your branch name, to indicate that this is work in progress and that others should be prepared to rebase if they branch off your branch.
 
 Any language change (including bug fixes) must be accompanied by the relevant updates to the spec, which lives in the same repository for this reason.
 
@@ -79,7 +81,11 @@ root> junit/testQuick
 
 It might take a few minutes the first time you run `junit/testQuick`, but from the second time onwards
 sbt will only run the tests that is affected by the code change since the last run.
-See `test/junit/` for the examples of JUnit tests.
+See `test/junit/` for examples of JUnit tests.
+
+JUnit tests will be compiled with the `starr` compiler, and run against the `quick` library. Some JUnit tests (search for `BytecodeTesting`) invoke the compiler programmatically and test its behavior or output, these tests use the `quick` compiler. 
+
+`starr` is the Scala release used to build the compiler and library, usually the last release. `quick` is the result of that compilation. See also ["Build Setup"](https://github.com/scala/scala#build-setup) in the README.
 
 #### ScalaCheck
 
@@ -109,8 +115,14 @@ To run a single negative test from sbt shell:
 root> partest --verbose test/files/neg/delayed-init-ref.scala
 ```
 
-To specify specific flags such as `-deprecation -Xlint -Xfatal-warnings`, you can put them in
-`test/files/neg/<test>.flags`. This could be used to test specific behavior under `-deprecation` flag etc.
+To specify compiler flags such as `-deprecation -Xlint -Xfatal-warnings`, you can add a comment
+at the top of your source file of the form: `// scalac: -deprecation -Xlint -Xfatal-warnings`.
+
+To test that no warnings are emitted, use `-Xfatal-warnings`. That will fail a `pos` test if there
+are warnings. Note that `pos` tests do not have `.check` files.
+
+To test that warnings are correctly emitted, use `-Xfatal-warnings` with a `neg` test and `.check` file.
+The usual way to create a `.check` file is `partest --update-check`.
 
 To run all tests in `neg` categories from sbt shell:
 
@@ -118,7 +130,7 @@ To run all tests in `neg` categories from sbt shell:
 root> partest --neg
 ```
 
-This might take a couple of minutes to complete. But in a few minutes you could test 1000+ negative examples,
+This might take a couple of minutes to complete. But in a few minutes, you could test 1000+ negative examples,
 so it's totally worth your time if you are working on changing error messages for example.
 
 Suppose you're interested in ranges. Here's how you can grep the partests and run them:
@@ -141,18 +153,33 @@ only the failed tests, similar to `testQuick`.
 root> partest --grep range --failed
 ```
 
+To inspect the generated files after running the test, add `--debug`:
+
+```
+root> partest --debug --verbose test/files/pos/traits.scala
+...
+# starting 1 test in pos
+% scalac pos/traits.scala -d /home/aengelen/dev/scala/test/files/pos/traits-pos.obj
+ok 1 - pos/traits.scala
+```
+
 See `--help` for more info:
 
 ```
 root> partest --help
 ```
 
-If you're fixing a bug in the compiler, you would typically start with Partest;
-If you're fixing a bug or implementing new features in the the library, consider using JUnit and/or ScalaCheck.
+Partests are compiled by the `quick` compiler (and `run` partests executed with the `quick` library),
+and therefore:
+
+* if you're working on the compiler, you must write a partest, or a `BytecodeTesting` JUnit test which invokes the compiler programmatically; however
+* if you're working on the library, a JUnit and/or ScalaCheck is better.
+
+If you're working on Partest itself, note that some of its source files are part of Scala's sbt build, and are compiled when sbt is launched, not via its `compile` command.
 
 #### exploring with REPL
 
-Before or during the test, you might get better insight of the code by starting a REPL session
+Before or during the test, you might get better insight into the code by starting a REPL session
 using the freshly built scala. To start a REPL session from the sbt shell:
 
 ```
@@ -189,8 +216,14 @@ Consider updating the package-level doc (in the package object), if appropriate.
 
 Please follow these standard code standards, though in moderation (scouts quickly learn to let sleeping dogs lie):
 
-* Don't violate [DRY](http://programmer.97things.oreilly.com/wiki/index.php/Don%27t_Repeat_Yourself).
-* Follow the [Boy Scout Rule](http://programmer.97things.oreilly.com/wiki/index.php/The_Boy_Scout_Rule).
+Don't violate [DRY](https://en.wikipedia.org/wiki/Don%27t_repeat_yourself).
+* DRY means: "Don't repeat yourself". 
+* Every piece of knowledge must have a single, unambiguous, authoritative representation within a system. 
+* Try to only write functionality or algorithms once and reference them (Abstraction) instead of Copy&Paste
+
+Follow the [Boy Scout Rule](https://martinfowler.com/bliki/OpportunisticRefactoring.html).
+* "Always leave the code behind in a better state than you found it"
+* This translates to using any opportunity possible to improve and clean up the code in front of you
 
 Please also have a look at the [Scala Hacker Guide](http://www.scala-lang.org/contribute/hacker-guide.html) by @xeno-by.
 
@@ -200,15 +233,17 @@ A pull request should consist of commits with messages that clearly state what p
 
 Commit logs should be stated in the active, present tense.
 
-A commit's subject should be 72 characters or less.  Overall, think of
-the first line of the commit as a description of the action performed
+The subject line of a commit message should be no more than 72 characters.
+Overall, think of the first line of the commit as a description of the action performed
 by the commit on the code base, so use the active voice and the
 present tense.  That also makes the commit subjects easy to reuse in
 release notes.
 
-For a bugfix, the end of the commit message should say "Fixes scala/bug#NNNN".
+For a bugfix, the end of the PR description (that is, the first comment on the PR) should say, "Fixes scala/bug#NNNN", as mentioned above.
 
-If a commit purely refactors and is not intended to change behaviour,
+NOTE: it's best not to add the issue reference to your commit message, as github will pollute the conversation on the ticket with notifications every time you commit.
+
+If a commit purely refactors and is not intended to change behavior,
 say so.
 
 Backports should be tagged as "[backport]".

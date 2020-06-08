@@ -1,13 +1,15 @@
+// scalac: -opt:l:none
+//
 import scala.tools.partest.BytecodeTest
 import scala.tools.asm
 import scala.tools.asm.util._
 import scala.tools.nsc.util.stringFromWriter
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 object Test extends BytecodeTest {
   val nullChecks = Set(asm.Opcodes.IFNONNULL, asm.Opcodes.IFNULL)
 
-  def show: Unit = {
+  def show(): Unit = {
     def test(methodName: String, expected: Int): Unit = {
       val classNode = loadClassNode("Lean")
       val methodNode = getMethod(classNode, methodName)

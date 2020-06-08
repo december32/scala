@@ -2,7 +2,6 @@ package scala.build
 
 import aQute.bnd.osgi.Builder
 import aQute.bnd.osgi.Constants._
-import java.util.Properties
 import java.util.jar.Attributes
 import sbt._
 import sbt.Keys._
@@ -31,7 +30,7 @@ object Osgi {
         "Bundle-SymbolicName" -> bundleSymbolicName.value,
         "ver" -> v,
         "Export-Package" -> "*;version=${ver};-split-package:=merge-first",
-        "Import-Package" -> "scala.*;version=\"${range;[==,=+);${ver}}\",*",
+        "Import-Package" -> raw"""scala.*;version="$${range;[==,=+);$${ver}}",*""",
         "Bundle-Version" -> v,
         "Bundle-RequiredExecutionEnvironment" -> "JavaSE-1.8",
         "-eclipse" -> "false"
@@ -39,13 +38,14 @@ object Osgi {
     },
     jarlist := false,
     bundle := Def.task {
-      val cp = (products in Compile in packageBin).value
+      val cp = (Compile / packageBin / products).value
+      val licenseFiles = License.licenseMapping.value.map(_._1)
       bundleTask(headers.value.toMap, jarlist.value, cp,
-        (artifactPath in (Compile, packageBin)).value, cp, streams.value)
+        (Compile / packageBin / artifactPath).value, cp ++ licenseFiles, streams.value)
     }.value,
-    packagedArtifact in (Compile, packageBin) := (((artifact in (Compile, packageBin)).value, bundle.value)),
+    Compile / packageBin / packagedArtifact := (((Compile / packageBin / artifact).value, bundle.value)),
     // Also create OSGi source bundles:
-    packageOptions in (Compile, packageSrc) += Package.ManifestAttributes(
+    Compile / packageSrc / packageOptions += Package.ManifestAttributes(
       "Bundle-Name" -> (description.value + " Sources"),
       "Bundle-SymbolicName" -> (bundleSymbolicName.value + ".source"),
       "Bundle-Version" -> versionProperties.value.osgiVersion,
@@ -63,10 +63,10 @@ object Osgi {
 
     // https://github.com/scala/scala-dev/issues/254
     // Must be careful not to include scala-asm.jar within scala-compiler.jar!
-    def resourceDirectoryRef(f: File) = (if (f.isDirectory) "" else "@") + f.getAbsolutePath
+    def resourceDirectoryRef(f: File) = (if (f.getName endsWith ".jar") "@" else "") + f.getAbsolutePath
 
     val includeRes = resourceDirectories.filter(_.exists).map(resourceDirectoryRef).mkString(",")
-    if(!includeRes.isEmpty) builder.setProperty(INCLUDERESOURCE, includeRes)
+    if (!includeRes.isEmpty) builder.setProperty(INCLUDERESOURCE, includeRes)
     builder.getProperties.asScala.foreach { case (k, v) => log.debug(s"bnd: $k: $v") }
     // builder.build is not thread-safe because it uses a static SimpleDateFormat.  This ensures
     // that all calls to builder.build are serialized.

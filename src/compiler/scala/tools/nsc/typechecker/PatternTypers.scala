@@ -1,6 +1,13 @@
-/* NSC -- new Scala compiler
- * Copyright 2005-2013 LAMP/EPFL
- * @author  Paul Phillips
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc.
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
  */
 
 package scala
@@ -13,14 +20,16 @@ import symtab.Flags
 import Mode._
 
  /**
+ *  A pattern match such as:
  *
- *  A pattern match such as
- *
- *    x match { case Foo(a, b) => ...}
+ * {{{
+ *   x match { case Foo(a, b) => ...}
+ * }}}
  *
  *  Might match an instance of any of the following definitions of Foo.
  *  Note the analogous treatment between case classes and unapplies.
  *
+ * {{{
  *    case class Foo(xs: Int*)
  *    case class Foo(a: Int, xs: Int*)
  *    case class Foo(a: Int, b: Int)
@@ -30,8 +39,8 @@ import Mode._
  *    object Foo { def unapplySeq(x: Any): Option[(Int, Seq[Int])] }
  *    object Foo { def unapply(x: Any): Option[(Int, Int)] }
  *    object Foo { def unapplySeq(x: Any): Option[(Int, Int, Seq[Int])] }
+ * }}}
  */
-
 trait PatternTypers {
   self: Analyzer =>
 
@@ -44,8 +53,6 @@ trait PatternTypers {
     import TyperErrorGen._
     import infer._
 
-    private def unit = context.unit
-
     // If the tree's symbol's type does not define an extractor, maybe the tree's type does.
     // this is the case when we encounter an arbitrary tree as the target of an unapply call
     // (rather than something that looks like a constructor call.) (for now, this only happens
@@ -53,7 +60,6 @@ trait PatternTypers {
     // more common place)
     private def hasUnapplyMember(tpe: Type): Boolean   = reallyExists(unapplyMember(tpe))
     private def hasUnapplyMember(sym: Symbol): Boolean = hasUnapplyMember(sym.tpe_*)
-    private def hasUnapplyMember(fun: Tree): Boolean   = hasUnapplyMember(fun.symbol) || hasUnapplyMember(fun.tpe)
 
     // ad-hoc overloading resolution to deal with unapplies and case class constructors
     // If some but not all alternatives survive filtering the tree's symbol with `p`,
@@ -85,19 +91,22 @@ trait PatternTypers {
         || member.isOverloaded // the whole overloading situation is over the rails
       )
 
+      // if we're already failing, no need to emit another error here
+      if (fun.tpe.isErroneous)
+        fun
       // Dueling test cases: pos/overloaded-unapply.scala, run/case-class-23.scala, pos/t5022.scala
       // A case class with 23+ params has no unapply method.
       // A case class constructor may be overloaded with unapply methods in the companion.
-      if (canElide && caseClass.isCase && !member.isOverloaded)
+      else if (canElide && caseClass.isCase && !member.isOverloaded)
         logResult(s"convertToCaseConstructor($fun, $caseClass, pt=$pt)")(convertToCaseConstructor(fun, caseClass, pt))
       else if (!reallyExists(member))
-        CaseClassConstructorError(fun, s"${fun.symbol} is not a case class, nor does it have an unapply/unapplySeq member")
+        CaseClassConstructorError(fun, s"${fun.symbol} is not a case class, nor does it have a valid unapply/unapplySeq member")
       else if (isOkay)
         fun
       else if (isEmptyType == NoType)
-        CaseClassConstructorError(fun, s"an unapply result must have a member `def isEmpty: Boolean")
+        CaseClassConstructorError(fun, s"an unapply result must have a member `def isEmpty: Boolean`")
       else
-        CaseClassConstructorError(fun, s"an unapply result must have a member `def isEmpty: Boolean (found: def isEmpty: $isEmptyType)")
+        CaseClassConstructorError(fun, s"an unapply result must have a member `def isEmpty: Boolean` (found: `def isEmpty: $isEmptyType`)")
     }
 
     def typedArgsForFormals(args: List[Tree], formals: List[Type], mode: Mode): List[Tree] = {
@@ -171,7 +180,7 @@ trait PatternTypers {
         case _         => wrapClassTagUnapply(treeTyped, extractor, tpe)
       }
     }
-    private class VariantToSkolemMap extends TypeMap(trackVariance = true) {
+    private class VariantToSkolemMap extends VariancedTypeMap {
       private val skolemBuffer = mutable.ListBuffer[TypeSymbol]()
 
       // !!! FIXME - skipping this when variance.isInvariant allows unsoundness, see scala/bug#5189
@@ -191,7 +200,7 @@ trait PatternTypers {
             else TypeBounds.lower(tpSym.tpeHK)
           )
           // origin must be the type param so we can deskolemize
-          val skolem = context.owner.newGADTSkolem(unit.freshTypeName("?" + tpSym.name), tpSym, bounds)
+          val skolem = context.owner.newGADTSkolem(freshTypeName("?" + tpSym.name), tpSym, bounds)
           skolemBuffer += skolem
           logResult(s"Created gadt skolem $skolem: ${skolem.tpe_*} to stand in for $tpSym")(skolem.tpe_*)
         case tp1 => tp1
@@ -227,9 +236,25 @@ trait PatternTypers {
      */
     private def convertToCaseConstructor(tree: Tree, caseClass: Symbol, ptIn: Type): Tree = {
       val variantToSkolem     = new VariantToSkolemMap
-      val caseClassType       = tree.tpe.prefix memberType caseClass
-      val caseConstructorType = caseClassType memberType caseClass.primaryConstructor
-      val tree1               = TypeTree(caseConstructorType) setOriginal tree
+
+      //  `caseClassType` is the prefix from which we're seeing the constructor info, so it must be kind *.
+      // Need the `initialize` call to make sure we see any type params.
+      val caseClassType       = caseClass.initialize.tpe_*.asSeenFrom(tree.tpe.prefix, caseClass.owner)
+      assert(!caseClassType.isHigherKinded, s"Unexpected type constructor $caseClassType")
+
+      // If the case class is polymorphic, need to capture those type params in the type that we relativize using asSeenFrom,
+      // as they may also be sensitive to the prefix (see test/files/pos/t11103.scala).
+      // Note that undetParams may thus be different from caseClass.typeParams.
+      // (For a monomorphic case class, GenPolyType will not create/destruct a PolyType.)
+      val (undetparams, caseConstructorType) =
+        GenPolyType.unapply {
+          val ctorUnderClassTypeParams = GenPolyType(caseClass.typeParams, caseClass.primaryConstructor.info)
+          ctorUnderClassTypeParams.asSeenFrom(caseClassType, caseClass)
+        }.get
+
+      // println(s"convertToCaseConstructor(${tree.tpe}, $caseClass, $ptIn) // $caseClassType // ${caseConstructorType.typeParams.map(_.info)}")
+
+      val tree1 = TypeTree(caseConstructorType) setOriginal tree
 
       // have to open up the existential and put the skolems in scope
       // can't simply package up pt in an ExistentialType, because that takes us back to square one (List[_ <: T] == List[T] due to covariance)
@@ -240,7 +265,7 @@ trait PatternTypers {
       // as instantiateTypeVar's bounds would end up there
       val ctorContext = context.makeNewScope(tree, context.owner)
       freeVars foreach ctorContext.scope.enter
-      newTyper(ctorContext).infer.inferConstructorInstance(tree1, caseClass.typeParams, ptSafe)
+      newTyper(ctorContext).infer.inferConstructorInstance(tree1, undetparams, ptSafe)
 
       // simplify types without losing safety,
       // so that we get rid of unnecessary type slack, and so that error messages don't unnecessarily refer to skolems
@@ -251,7 +276,8 @@ trait PatternTypers {
       // tree1's remaining type-slack skolems will be deskolemized (to the method type parameter skolems)
       tree1 modifyType {
         case MethodType(ctorArgs, restpe) => // ctorArgs are actually in a covariant position, since this is the type of the subpatterns of the pattern represented by this Apply node
-          copyMethodType(tree1.tpe, ctorArgs map (_ modifyInfo extrapolate), extrapolate(restpe)) // no need to clone ctorArgs, this is OUR method type
+          ctorArgs foreach (_ modifyInfo extrapolate)
+          copyMethodType(tree1.tpe, ctorArgs, extrapolate(restpe)) // no need to clone ctorArgs, this is OUR method type
         case tp => tp
       }
     }

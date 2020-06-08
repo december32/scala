@@ -206,9 +206,6 @@ object scalac extends Command {
           CmdOption("Xfull-lubs"),
           "Retain pre 2.10 behavior of less aggressive truncation of least upper bounds."),
         Definition(
-          CmdOption("Xfuture"),
-          "Turn on future language features."),
-        Definition(
           CmdOption("Xgenerate-phase-graph", Argument("file")),
           "Generate the phase graphs (outputs .dot files) to fileX.dot."),
         Definition(
@@ -236,9 +233,6 @@ object scalac extends Command {
           CmdOption("Xmain-class", Argument("path")),
           "Class for manifest's Main-Class entry (only useful with -d <jar>)."),
         Definition(
-          CmdOption("Xmax-classfile-name", Argument("n")),
-          "Maximum filename length for generated classes."),
-        Definition(
           CmdOptionBound("Xmigration:", Argument("version")),
           "Warn about constructs whose behavior may have changed since" & Argument("version") & "."),
         Definition(
@@ -248,11 +242,8 @@ object scalac extends Command {
           CmdOption("Xno-patmat-analysis"),
           "Don't perform exhaustivity/unreachability analysis. Also, ignore " & MItalic("@switch") & " annotation."),
         Definition(
-          CmdOption("Xno-uescape"),
-          "Disable handling of " & BSlash & "u unicode escapes"),
-        Definition(
-          CmdOption("Xnojline"),
-          "Do not use JLine for editing."),
+          CmdOption("Xjline"),
+          "The JLine keybindings to use: emacs/vi/off."),
         Definition(
           CmdOptionBound("Xplugin:", Argument("paths")),
           "Load a plugin from each classpath."),
@@ -269,16 +260,16 @@ object scalac extends Command {
           CmdOption("Xpluginsdir", Argument("path")),
           "Path to search for plugin archives."),
         Definition(
-          CmdOptionBound("Xprint:", Argument("phases")),
+          CmdOptionBound("Vprint:", Argument("phases")),
           "Print out program after " & Argument("phases") & " (see below)."),
         Definition(
-          CmdOptionBound("Xprint-icode", "[:" & Argument("phases") & "]"),
+          CmdOptionBound("Vprint-icode", "[:" & Argument("phases") & "]"),
           "Log internal icode to *.icode files after" & Argument("phases") & " (default: icode)."),
         Definition(
-          CmdOption("Xprint-pos"),
+          CmdOption("Vprint-pos"),
           "Print tree positions, as offsets."),
         Definition(
-          CmdOption("Xprint-types"),
+          CmdOption("Vprint-types"),
           "Print tree types (debugging option)."),
         Definition(
           CmdOption("Xprompt"),
